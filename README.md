@@ -18,10 +18,21 @@ desktop companion, or network stream.
 项目 Pages 展示页 / Project Pages:
 <https://hachikoj.github.io/easyinput-music-firmware/>
 
-<video controls preload="metadata" width="720" poster="site/assets/music-playback-demo.jpg" src="site/assets/music-playback-demo.mp4"></video>
+[![开发版本地播放音乐实机演示](site/assets/music-playback-demo.jpg)](site/assets/music-playback-demo.mp4)
+
+GitHub README 使用可点击缩略图打开 MP4；项目 Pages 提供页面内播放器。
+The GitHub README uses a clickable poster for compatibility; the project Pages
+site provides inline playback.
 
 [打开或下载实机演示视频](site/assets/music-playback-demo.mp4) ·
 [Open or download the hardware demo](site/assets/music-playback-demo.mp4)
+
+## 项目关注度 / Project signals
+
+![Star trend](https://api.star-history.com/svg?repos=HachikoJ/easyinput-music-firmware&type=Date)
+
+独立 Star History / Independent Star History:
+<https://star-history.com/#HachikoJ/easyinput-music-firmware&Date>
 
 ### 音乐模式 / Music mode
 
