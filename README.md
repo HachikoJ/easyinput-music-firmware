@@ -21,11 +21,12 @@ desktop companion, or network stream.
 问题反馈 / Feedback:
 <https://github.com/HachikoJ/easyinput-music-firmware/issues>
 
-<video controls preload="metadata" width="720" poster="https://hachikoj.github.io/easyinput-music-firmware/assets/music-playback-demo.jpg" src="https://hachikoj.github.io/easyinput-music-firmware/assets/music-playback-demo.mp4"></video>
+[![点击播放开发版本地播放音乐实机演示](https://hachikoj.github.io/easyinput-music-firmware/assets/music-playback-demo.jpg)](https://hachikoj.github.io/easyinput-music-firmware/#demo)
 
-GitHub README 直接使用项目 Pages 的 MP4 播放源；点击播放器即可播放，项目 Pages 也提供同一播放器。
-The README uses the project Pages MP4 source directly, so the embedded player
-can start playback without opening a download page.
+GitHub 会清理 README 中的普通 `<video>` 标签，也不会在线预览仓库内的大 MP4。点击上方视频缩略图会直接进入项目 Pages 的内嵌播放器，不会触发下载。
+GitHub sanitizes ordinary README `<video>` tags and does not preview large MP4
+files in the repository. Click the poster above to open the project Pages
+inline player instead of a download page.
 
 ### 音乐模式 / Music mode
 
