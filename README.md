@@ -18,6 +18,9 @@ desktop companion, or network stream.
 项目 Pages 展示页 / Project Pages:
 <https://hachikoj.github.io/easyinput-music-firmware/>
 
+问题反馈 / Feedback:
+<https://github.com/HachikoJ/easyinput-music-firmware/issues>
+
 [![开发版本地播放音乐实机演示](site/assets/music-playback-demo.jpg)](site/assets/music-playback-demo.mp4)
 
 GitHub README 使用可点击缩略图打开 MP4；项目 Pages 提供页面内播放器。
@@ -162,8 +165,8 @@ AI 写代码不等于结果已经正确。你仍需要查看改动、确认测�
 
 不需要先会写完整的 C++ 才能参与。你可以只提出一个需求，也可以让 AI 帮你完成修改后再提交代码：
 
-- **只有新想法**：先搜索是否已有相同讨论，然后通过 [功能建议 Issue](https://github.com/CY-CHENYUE/easy-input-maker/issues/new/choose) 说明使用场景、希望看到的结果和涉及的功能；不要求先写代码。
-- **发现固件问题**：通过 [问题反馈 Issue](https://github.com/CY-CHENYUE/easy-input-maker/issues/new/choose) 提供预期现象、实际现象、最小复现步骤和已经完成的验证。
+- **只有新想法**：先搜索是否已有相同讨论，然后通过 [功能建议 Issue](https://github.com/HachikoJ/easyinput-music-firmware/issues/new/choose) 说明使用场景、希望看到的结果和涉及的功能；不要求先写代码。
+- **发现固件问题**：通过 [问题反馈 Issue](https://github.com/HachikoJ/easyinput-music-firmware/issues/new/choose) 提供预期现象、实际现象、最小复现步骤和已经完成的验证。
 - **已经完成修改**：Fork 本仓库，在自己的功能分支中让 AI 修改并验证，然后提交 Pull Request；维护者审核通过后再合并到 `main`。
 
 只在自己电脑和开发板上修改时，不需要提交 Issue 或 PR。Issue 也不是每个 Pull Request 的强制前置：文档、小型修复或边界清楚的功能可以直接提交 PR；涉及 GPIO、BOOT、USB/BLE、音频、电源、网络认证或持久配置时，建议先开 Issue 对齐方案。完整的新手步骤、命令示例和 AI 提示词见 [中文共创与提交教程](docs/contributing/how-to-contribute.md)。
