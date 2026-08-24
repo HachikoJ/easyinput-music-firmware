@@ -44,6 +44,9 @@ inline player instead of a download page.
 
 本仓库的 `music/` 目录包含两份用于开发板验证的 Ogg Opus 文件：`track0-dao-xiang.opus.ogg`（《稻香》/ 周杰伦）和 `track1-flower.opus.ogg`（Flower / Johnny Stimson）。它们仅用于本项目硬件测试与演示，不代表项目取得了歌曲、录音制品或表演者权利。上传者和再分发者必须自行确认获得了相应授权；没有授权时应立即删除这些文件，不得用于商业、公开传播或其他超出授权范围的用途。完整声明见 [`music/README.md`](music/README.md)。
 
+- [track0-dao-xiang.opus.ogg](music/track0-dao-xiang.opus.ogg)
+- [track1-flower.opus.ogg](music/track1-flower.opus.ogg)
+
 Ogg files may be included for hardware demonstration only when the uploader
 owns the rights or has explicit redistribution permission. The uploader is
 responsible for music, master recording, performer, and platform rights. Do not
