@@ -21,21 +21,11 @@ desktop companion, or network stream.
 问题反馈 / Feedback:
 <https://github.com/HachikoJ/easyinput-music-firmware/issues>
 
-[![开发版本地播放音乐实机演示](site/assets/music-playback-demo.jpg)](site/assets/music-playback-demo.mp4)
+<video controls preload="metadata" width="720" poster="https://hachikoj.github.io/easyinput-music-firmware/assets/music-playback-demo.jpg" src="https://hachikoj.github.io/easyinput-music-firmware/assets/music-playback-demo.mp4"></video>
 
-GitHub README 使用可点击缩略图打开 MP4；项目 Pages 提供页面内播放器。
-The GitHub README uses a clickable poster for compatibility; the project Pages
-site provides inline playback.
-
-[打开或下载实机演示视频](site/assets/music-playback-demo.mp4) ·
-[Open or download the hardware demo](site/assets/music-playback-demo.mp4)
-
-## 项目关注度 / Project signals
-
-![Star trend](https://api.star-history.com/svg?repos=HachikoJ/easyinput-music-firmware&type=Date)
-
-独立 Star History / Independent Star History:
-<https://star-history.com/#HachikoJ/easyinput-music-firmware&Date>
+GitHub README 直接使用项目 Pages 的 MP4 播放源；点击播放器即可播放，项目 Pages 也提供同一播放器。
+The README uses the project Pages MP4 source directly, so the embedded player
+can start playback without opening a download page.
 
 ### 音乐模式 / Music mode
 
@@ -51,13 +41,20 @@ site provides inline playback.
 
 ### 公开媒体与版权 / Public media and copyright
 
-Ogg 音频文件可以放在本仓库用于硬件演示，但仅限上传者拥有版权或明确获得再分发授权的文件。上传者负责确认词曲、录音制品、表演者和平台许可；没有授权的商业歌曲不要上传到公开仓库。仓库中的 `music/` 文件（如有）仅作私有测试，不代表项目取得了音乐版权。
+本仓库的 `music/` 目录包含两份用于开发板验证的 Ogg Opus 文件：`track0-dao-xiang.opus.ogg`（《稻香》/ 周杰伦）和 `track1-flower.opus.ogg`（Flower / Johnny Stimson）。它们仅用于本项目硬件测试与演示，不代表项目取得了歌曲、录音制品或表演者权利。上传者和再分发者必须自行确认获得了相应授权；没有授权时应立即删除这些文件，不得用于商业、公开传播或其他超出授权范围的用途。完整声明见 [`music/README.md`](music/README.md)。
 
 Ogg files may be included for hardware demonstration only when the uploader
 owns the rights or has explicit redistribution permission. The uploader is
 responsible for music, master recording, performer, and platform rights. Do not
-publish commercial recordings without permission. Any `music/` files are test
-media and do not grant the project a music license.
+publish or redistribute recordings without permission. The repository currently
+includes two Ogg Opus files for board validation:
+`track0-dao-xiang.opus.ogg` ("Dao Xiang" / Jay Chou) and
+`track1-flower.opus.ogg` ("Flower" / Johnny Stimson). They are test and demo
+media only; their presence does not grant the project any song, master
+recording, or performer rights. Uploaders and redistributors must confirm the
+required permissions themselves. Without permission, delete the files and do
+not use them commercially, publish them further, or exceed the granted scope.
+See [`music/README.md`](music/README.md) for the full notice.
 
 ### 构建音乐固件 / Build the music image
 
@@ -76,7 +73,7 @@ idf.py -B build-music \
   build
 ```
 
-公开仓库不包含商业歌曲或由其生成的私有音乐镜像；完整构建、测试和硬件安全边界见 `docs/`。
+公开仓库包含上述两份测试 Ogg，但不包含由其生成的私有音乐镜像；完整构建、测试和硬件安全边界见 `docs/`。
 
 > 当前状态：当前公开候选已在 EasyInput V2.0 实板完成联合功能测试；按键、编码器、灯光、USB/BLE、麦克风、扬声器、电源与启动恢复等主流程观察正常。构建、烧录与本次实板观察仍是不同证据。
 >
