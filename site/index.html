@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="EasyInput V2.0 ESP32-S3 offline music firmware demo.">
+  <meta property="og:title" content="EasyInput Offline Music Firmware">
+  <meta property="og:description" content="On-board Ogg Opus decoding, speaker playback, volume control, and multi-color beat breathing.">
+  <meta property="og:image" content="assets/music-playback-demo.jpg">
+  <meta name="theme-color" content="#0b1020">
+  <link rel="icon" href="assets/easyinput-mark.svg" type="image/svg+xml">
+  <title>EasyInput Offline Music Firmware</title>
+  <style>
+    :root { --bg:#080b14; --panel:#111827; --panel-2:#151d2f; --line:#29354a; --text:#f7fafc; --muted:#b7c3d6; --teal:#2dd4bf; --amber:#fbbf24; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter,ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; line-height:1.6; }
+    a { color:var(--teal); }
+    .wrap { width:min(1120px,calc(100% - 32px)); margin:0 auto; }
+    .nav { position:sticky; top:0; z-index:5; background:rgba(8,11,20,.94); border-bottom:1px solid var(--line); backdrop-filter:blur(14px); }
+    .nav-inner { min-height:64px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--text); text-decoration:none; font-weight:800; }
+    .brand img { width:30px; height:30px; }
+    .nav-links { display:flex; gap:18px; flex-wrap:wrap; justify-content:flex-end; }
+    .nav-links a { color:var(--muted); text-decoration:none; font-size:.93rem; }
+    .nav-links a:hover { color:var(--text); }
+    main { padding:46px 0 80px; }
+    .hero { display:grid; grid-template-columns:minmax(0,1fr) minmax(360px,1.05fr); gap:38px; align-items:center; min-height:610px; }
+    .eyebrow { color:var(--amber); font-weight:800; letter-spacing:.08em; text-transform:uppercase; font-size:.82rem; }
+    h1 { font-size:clamp(2.7rem,6vw,5.2rem); line-height:1.02; margin:12px 0 20px; max-width:650px; }
+    .lead { color:var(--muted); font-size:clamp(1.05rem,2vw,1.3rem); max-width:610px; }
+    .actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
+    .button { display:inline-flex; align-items:center; justify-content:center; padding:11px 16px; border:1px solid var(--line); border-radius:8px; color:var(--text); text-decoration:none; font-weight:750; background:var(--panel); }
+    .button.primary { color:#07121a; background:var(--teal); border-color:var(--teal); }
+    .button:hover { border-color:var(--teal); }
+    .video-frame { margin:0; border:1px solid var(--line); background:var(--panel); border-radius:10px; overflow:hidden; box-shadow:0 22px 55px rgba(0,0,0,.3); }
+    video { display:block; width:100%; height:auto; background:#020409; }
+    figcaption { padding:12px 15px; color:var(--muted); font-size:.9rem; }
+    section { padding:72px 0; border-top:1px solid var(--line); }
+    .section-head { display:flex; align-items:end; justify-content:space-between; gap:24px; margin-bottom:26px; }
+    h2 { font-size:clamp(1.8rem,3vw,2.65rem); margin:0; line-height:1.1; }
+    .section-head p { color:var(--muted); max-width:550px; margin:0; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+    .item { padding:22px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    .item h3 { margin:0 0 8px; font-size:1.08rem; }
+    .item p { margin:0; color:var(--muted); }
+    .item strong { color:var(--amber); }
+    .code { overflow:auto; border:1px solid var(--line); border-radius:8px; background:#050811; padding:20px; color:#d8e6f7; font:.9rem/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    footer { padding:28px 0 44px; color:var(--muted); border-top:1px solid var(--line); }
+    .top { position:fixed; right:20px; bottom:20px; width:42px; height:42px; border:1px solid var(--line); border-radius:50%; background:var(--panel-2); color:var(--text); text-decoration:none; display:grid; place-items:center; }
+    @media (max-width:780px) { .nav-inner { align-items:flex-start; padding:13px 0; flex-direction:column; } .nav-links { justify-content:flex-start; gap:12px; } .hero { grid-template-columns:1fr; min-height:0; gap:28px; } main { padding-top:32px; } .grid { grid-template-columns:1fr; } .section-head { display:block; } .section-head p { margin-top:12px; } }
+  </style>
+</head>
+<body id="top">
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top"><img src="assets/easyinput-mark.svg" alt="EasyInput">EasyInput Music Firmware</a>
+      <nav class="nav-links" aria-label="Project navigation"><a href="#demo">Demo</a><a href="#controls">Controls</a><a href="#build">Build</a><a href="https://github.com/HachikoJ/easyinput-music-firmware">Source</a></nav>
+    </div>
+  </header>
+  <main>
+    <div class="wrap">
+      <section class="hero" id="demo" style="border-top:0; padding-top:18px;">
+        <div>
+          <div class="eyebrow">EasyInput V2.0 · ESP32-S3 · Offline</div>
+          <h1>音乐在板上解码，灯光跟着节奏呼吸。</h1>
+          <p class="lead">两首 Ogg Opus 音乐存储在本地 Flash，由开发板直接解码并播放。旋钮控制音量与暂停，S1-S8 控制播放列表，D1-D5 输出多色节奏灯效。</p>
+          <div class="actions"><a class="button primary" href="#controls">查看按键逻辑</a><a class="button" href="https://github.com/HachikoJ/easyinput-music-firmware">打开源码</a></div>
+        </div>
+        <figure class="video-frame"><video controls preload="metadata" poster="assets/music-playback-demo.jpg"><source src="assets/music-playback-demo.mp4" type="video/mp4">Your browser does not support HTML video.</video><figcaption>开发版本地播放音乐实机演示 · 36 秒</figcaption></figure>
+      </section>
+      <section id="controls">
+        <div class="section-head"><h2>Controls / 操作</h2><p>进入音乐模式后，S1-S8 原有快捷键暂时让位给播放控制。</p></div>
+        <div class="grid"><article class="item"><h3>模式</h3><p>旋钮短按双击进入或退出音乐模式。</p></article><article class="item"><h3>播放</h3><p>任意 S1-S8 开始第一首；再次按下切换下一首并无限循环。</p></article><article class="item"><h3>暂停与音量</h3><p>单击旋钮暂停/继续；左旋降低、右旋提高，默认 <strong>15%</strong>。</p></article><article class="item"><h3>灯效</h3><p>D1-D5 根据音频 RMS 与节拍输出多色动态呼吸。</p></article><article class="item"><h3>本地解码</h3><p>音频从板载 Flash 读取，播放链路不依赖 Wi-Fi 或电脑。</p></article><article class="item"><h3>容量边界</h3><p>测试 App 分区保留 49% 空间，DIRAM 余量 153,661 bytes。</p></article></div>
+      </section>
+      <section id="build">
+        <div class="section-head"><h2>Build / 构建</h2><p>音乐文件是外部输入，不随公开源码发布。请使用有授权的 Ogg Opus 文件。</p></div>
+        <pre class="code"><code>idf.py -B build-music \
+  -D EASY_INPUT_MUSIC_PLAYER=ON \
+  -D EASY_INPUT_SPEAKER_ASSETS_PRODUCT=OFF \
+  -D EASY_INPUT_SPEAKER_DIAGNOSTIC=OFF \
+  -D EASY_INPUT_MUSIC_TRACK_0="/absolute/path/track-0.ogg" \
+  -D EASY_INPUT_MUSIC_TRACK_1="/absolute/path/track-1.ogg" \
+  build</code></pre>
+        <div class="actions"><a class="button primary" href="https://github.com/HachikoJ/easyinput-music-firmware#easyinput-offline-music-firmware">完整构建说明</a><a class="button" href="https://github.com/HachikoJ/easyinput-music-firmware/issues">反馈问题</a></div>
+      </section>
+    </div>
+  </main>
+  <footer><div class="wrap">EasyInput Offline Music Firmware · ESP-IDF 5.5.5 · Noncommercial hardware study build</div></footer>
+  <a class="top" href="#top" aria-label="Back to top">↑</a>
+</body>
+</html>

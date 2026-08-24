@@ -1,0 +1,10 @@
+idf_component_register(
+  SRCS
+    "src/music_library.cpp"
+    "src/ogg_opus_decoder.cpp"
+  INCLUDE_DIRS
+    "include"
+  PRIV_REQUIRES
+    esp_partition
+    heap
+)

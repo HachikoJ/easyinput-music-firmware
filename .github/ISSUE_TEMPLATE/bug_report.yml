@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible firmware or documentation problem.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Please remove personal paths, device identifiers, credentials, and private logs."
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened, and what is the smallest reproduction?
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Board, OS, ESP-IDF version, and command used.
+    validations:
+      required: true
