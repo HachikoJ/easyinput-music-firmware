@@ -1,0 +1,21 @@
+idf_component_register(
+  SRCS
+    "src/music_catalog.cpp"
+    "src/online_music_asr.cpp"
+    "src/online_music_stream.cpp"
+    "src/song_query.cpp"
+    "src/ws_text_assembler.cpp"
+  INCLUDE_DIRS
+    "include"
+  PRIV_REQUIRES
+    keyboard
+    esp_http_client
+    esp_driver_i2s
+    esp_netif
+    esp_wifi
+    heap
+    mbedtls
+    esp-tls
+    tcp_transport
+    json
+)

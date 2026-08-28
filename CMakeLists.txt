@@ -160,6 +160,18 @@ if(EASY_INPUT_MUSIC_PLAYER)
 endif()
 message(STATUS "EasyInput offline music player: ${EASY_INPUT_MUSIC_PLAYER}")
 
+set(
+  EASY_INPUT_ONLINE_MUSIC
+  ON
+  CACHE BOOL
+  "Build the online MP3 music playback capability"
+)
+if(EASY_INPUT_ONLINE_MUSIC)
+  list(APPEND EXTRA_COMPONENT_DIRS
+    "${CMAKE_SOURCE_DIR}/features/online_music")
+endif()
+message(STATUS "EasyInput online music playback: ${EASY_INPUT_ONLINE_MUSIC}")
+
 # The production PCB is ESP32-S3 only. Reject a stale caller/cache target before
 # ESP-IDF loads any target-specific Kconfig, then keep the cache explicit so a
 # release command never relies on idf.py guessing from a developer-local
@@ -239,6 +251,10 @@ idf_build_set_property(
 idf_build_set_property(
   EASY_INPUT_MUSIC_PLAYER_ENABLED
   "${EASY_INPUT_MUSIC_PLAYER}"
+)
+idf_build_set_property(
+  EASY_INPUT_ONLINE_MUSIC_ENABLED
+  "${EASY_INPUT_ONLINE_MUSIC}"
 )
 if(EASY_INPUT_SPEAKER_OPUS_DIAGNOSTIC OR EASY_INPUT_MUSIC_PLAYER)
   # The active component graph differs for Opus diagnostic/music images. Keep

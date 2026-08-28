@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string_view>
 #include <unistd.h>
 
 #include "driver/i2s_std.h"
@@ -22,6 +23,7 @@
 #include "keyboard/board_pins.h"
 #include "keyboard/config_receiver.h"
 #include "keyboard/power_policy.h"
+#include "keyboard/wifi_roaming.h"
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 
@@ -64,6 +66,9 @@ constexpr std::uint32_t kControlRecvTimeoutMs = 300;
 constexpr std::uint32_t kControlConfigPollMs = 500;
 constexpr std::uint32_t kControlWifiRetryMs = 10000;
 constexpr std::uint32_t kControlAudioTriggerWifiRetryMs = 1000;
+constexpr std::uint32_t kWifiRoamScanInitialRetryMs = 30000;
+constexpr std::uint32_t kWifiRoamScanMaxRetryMs = 5 * 60 * 1000;
+constexpr std::size_t kWifiRoamMaxScanRecords = 64;
 constexpr std::uint32_t kControlResolveRetryMs = 2000;
 // 音频网络省电(录音/租约永远豁免):
 // 网络活跃(<2min): 心跳 2s + WIFI_PS_MIN_MODEM;
@@ -473,6 +478,13 @@ void KeyboardAudioLink::configure(const KeyboardAudioConfig& config) {
     const bool reconnect_after_release =
         wifi_released_for_deep_sleep_ || wifi_disconnect_pending_;
     config_ = config;
+    if (boot_wifi_autoconnect_state_ ==
+        ai_keyboard::BootWifiAutoconnectState::TimedOut) {
+      // A later desktop configuration is an explicit request and may restart
+      // the existing on-demand connection path after the boot window closed.
+      boot_wifi_autoconnect_state_ =
+          ai_keyboard::BootWifiAutoconnectState::Bypassed;
+    }
     if (endpoint_changed || speaker_service_changed) {
       wifi_service_host_ipv4_ = 0U;
       wifi_service_host_ipv4_valid_ = false;
@@ -516,7 +528,11 @@ void KeyboardAudioLink::configure(const KeyboardAudioConfig& config) {
           !session_lifecycle_.active() &&
           capture_status_ != "mic_restarting") {
         capture_status_ = "mic_preparing";
-        should_preconnect = true;
+        // The initial boot sync is followed by start_boot_wifi_autoconnect().
+        // Do not let configure() bypass its credential and timeout gate.
+        should_preconnect =
+            boot_wifi_autoconnect_state_ !=
+            ai_keyboard::BootWifiAutoconnectState::Pending;
         should_prepare_microphone = true;
       }
     }
@@ -548,6 +564,69 @@ void KeyboardAudioLink::configure(const KeyboardAudioConfig& config) {
            "audio config enabled=%d endpoint_configured=%d",
            config.enabled ? 1 : 0,
            !config.wifi_ssid.empty() && !config.host.empty() && config.port != 0 ? 1 : 0);
+}
+
+void KeyboardAudioLink::start_boot_wifi_autoconnect() {
+  TaskHandle_t control_task = nullptr;
+  bool start = false;
+  lock();
+  if (init_state_ == InitState::Ready &&
+      boot_wifi_autoconnect_state_ ==
+          ai_keyboard::BootWifiAutoconnectState::Pending &&
+      ai_keyboard::has_protected_wifi_profile(config_.wifi_profiles)) {
+    const auto now = xTaskGetTickCount();
+    boot_wifi_autoconnect_state_ =
+        ai_keyboard::BootWifiAutoconnectState::Active;
+    boot_wifi_autoconnect_started_tick_ = now;
+    boot_wifi_last_attempt_tick_ = 0;
+    control_task = control_task_;
+    start = true;
+  } else if (boot_wifi_autoconnect_state_ ==
+             ai_keyboard::BootWifiAutoconnectState::Pending) {
+    boot_wifi_autoconnect_state_ =
+        ai_keyboard::BootWifiAutoconnectState::TimedOut;
+  }
+  unlock();
+  if (start && control_task != nullptr) {
+    xTaskNotifyGive(control_task);
+  }
+}
+
+bool KeyboardAudioLink::stop_wifi_after_boot_autoconnect_timeout() {
+  WifiOpGuard wifi_guard(wifi_op_mutex_);
+  lock();
+  const bool safe = boot_wifi_autoconnect_state_ ==
+                        ai_keyboard::BootWifiAutoconnectState::Active &&
+                    !session_lifecycle_.active() && !lease_armed_ &&
+                    !wifi_service_lease_.valid() && !wifi_disconnect_pending_;
+  const bool started = wifi_started_;
+  unlock();
+  if (!safe) {
+    return false;
+  }
+  if (started) {
+    const esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+      ESP_LOGW(kTag, "boot Wi-Fi timeout stop failed: %s",
+               esp_err_to_name(err));
+      return false;
+    }
+    lock();
+    wifi_started_ = false;
+    unlock();
+  }
+  lock();
+  boot_wifi_autoconnect_state_ =
+      ai_keyboard::BootWifiAutoconnectState::TimedOut;
+  wifi_reconnect_requested_ = false;
+  wifi_reconnect_requested_tick_ = 0;
+  unlock();
+  xEventGroupClearBits(wifi_events_, kWifiConnectedBit);
+  xEventGroupSetBits(wifi_events_, kWifiDisconnectedBit);
+  mark_control_state("boot_wifi_timeout");
+  notify_work_ready();
+  ESP_LOGI(kTag, "boot Wi-Fi autoconnect window expired; driver stopped");
+  return true;
 }
 
 void KeyboardAudioLink::set_work_ready_callback(WorkReadyCallback callback,
@@ -584,6 +663,72 @@ void KeyboardAudioLink::request_heartbeat_refresh() {
 void KeyboardAudioLink::set_audio_io_arbiter(
     ai_keyboard::AudioIoArbiter* arbiter) {
   audio_io_arbiter_ = arbiter;
+}
+
+bool KeyboardAudioLink::ensure_internet_ready() {
+  auto config = config_snapshot();
+  if (!config.online_music_enabled ||
+      !ai_keyboard::has_protected_wifi_profile(config.wifi_profiles)) {
+    return false;
+  }
+
+  {
+    WifiOpGuard wifi_guard(wifi_op_mutex_);
+    if (wifi_events_ != nullptr &&
+        (xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) != 0) {
+      return true;
+    }
+  }
+
+  // Online music may start after the bounded boot window stopped the driver,
+  // or after roaming selected a different saved profile. Reuse the same
+  // saved-network scan path as background roaming instead of requiring the
+  // legacy single `wifi_ssid` field to name the current AP.
+  const esp_err_t scan_err = connect_best_saved_wifi(config, "online_music");
+  if (scan_err != ESP_OK) {
+    return false;
+  }
+
+  const auto started_tick = xTaskGetTickCount();
+  while (wifi_events_ != nullptr) {
+    const auto bits = xEventGroupWaitBits(
+        wifi_events_, kWifiConnectedBit, pdFALSE, pdFALSE, delay_ticks(200));
+    if ((bits & kWifiConnectedBit) != 0) {
+      return true;
+    }
+    const auto elapsed_ms = static_cast<std::uint32_t>(
+        (xTaskGetTickCount() - started_tick) * portTICK_PERIOD_MS);
+    if (elapsed_ms >= kWifiConnectTimeoutMs) {
+      break;
+    }
+  }
+  return false;
+}
+
+bool KeyboardAudioLink::start_microphone_capture(std::uint32_t generation) {
+  if (generation == 0U || audio_io_arbiter_ == nullptr ||
+      !audio_io_arbiter_->request_microphone(generation)) {
+    return false;
+  }
+  const auto err = ensure_microphone_ready();
+  if (err != ESP_OK) {
+    audio_io_arbiter_->finish_microphone(generation);
+    return false;
+  }
+  return true;
+}
+
+esp_err_t KeyboardAudioLink::read_microphone_frame(std::uint8_t* frame,
+                                                   std::size_t frame_size,
+                                                   std::size_t* bytes_read) {
+  return read_microphone_pcm16(frame, frame_size, bytes_read);
+}
+
+void KeyboardAudioLink::stop_microphone_capture(std::uint32_t generation) {
+  shutdown_microphone();
+  if (audio_io_arbiter_ != nullptr && generation != 0U) {
+    audio_io_arbiter_->finish_microphone(generation);
+  }
 }
 
 void KeyboardAudioLink::start_stream(const char* reason, std::uint64_t session_id) {
@@ -835,9 +980,13 @@ void KeyboardAudioLink::run_control_channel() {
   std::uint32_t loop_count = 0;
   TickType_t last_heartbeat_tick = 0;
   std::uint32_t handled_heartbeat_request_generation = 0;
-  // 首次重连留给开机路径的 preconnect,10s 后才由控制任务兜底重连,
-  // 避免开机窗口内两个任务并发调用 esp_wifi 配置/连接。
+  // Configuration updates retain their existing preconnect path. The same
+  // operation mutex serializes that request with this bounded boot retry.
   TickType_t last_wifi_attempt_tick = xTaskGetTickCount();
+  TickType_t last_wifi_scan_tick = 0;
+  std::uint32_t wifi_scan_retry_ms = kWifiRoamScanInitialRetryMs;
+  bool wifi_roam_retry_started = false;
+  TickType_t observed_wifi_reconnect_tick = 0;
   TickType_t last_resolve_attempt_tick = 0;
 
   const auto close_control_socket = [&sock, &dest_valid]() {
@@ -884,8 +1033,22 @@ void KeyboardAudioLink::run_control_channel() {
     }
     const auto config = config_snapshot();
     const bool config_ready = config.enabled && !config.wifi_ssid.empty() &&
-                              !config.host.empty() && config.port != 0;
-    if (!config_ready) {
+                              ((!config.host.empty() && config.port != 0) ||
+                               config.online_music_enabled);
+    const bool online_only = config.online_music_enabled &&
+                             (config.host.empty() || config.port == 0);
+    lock();
+    const auto boot_wifi_state = boot_wifi_autoconnect_state_;
+    const auto boot_wifi_started_tick = boot_wifi_autoconnect_started_tick_;
+    const auto boot_wifi_last_attempt_tick = boot_wifi_last_attempt_tick_;
+    unlock();
+    const bool boot_wifi_active =
+        boot_wifi_state == ai_keyboard::BootWifiAutoconnectState::Active;
+    const bool boot_wifi_connected =
+        boot_wifi_state == ai_keyboard::BootWifiAutoconnectState::Connected;
+    const bool protected_credentials =
+        ai_keyboard::has_protected_wifi_profile(config.wifi_profiles);
+    if (!config_ready && !boot_wifi_active && !boot_wifi_connected) {
       close_control_socket();
       const bool wifi_stopped = stop_wifi_for_inactive_audio();
       if (wifi_stopped) {
@@ -899,7 +1062,7 @@ void KeyboardAudioLink::run_control_channel() {
     lock();
     const bool session_active =
         session_lifecycle_.active() || lease_armed_ ||
-        wifi_service_lease_.valid();
+        wifi_service_lease_.valid() || online_music_downlink_active_;
     const auto last_network_activity = last_network_activity_tick_;
     const bool release_requested = deep_sleep_release_requested_;
     const auto release_requested_tick = deep_sleep_release_requested_tick_;
@@ -907,6 +1070,17 @@ void KeyboardAudioLink::run_control_channel() {
     const bool disconnect_pending = wifi_disconnect_pending_;
     unlock();
     const auto now_tick = xTaskGetTickCount();
+    const auto boot_elapsed_ms =
+        boot_wifi_active
+            ? static_cast<std::uint32_t>(
+                  (now_tick - boot_wifi_started_tick) * portTICK_PERIOD_MS)
+            : 0U;
+    const auto boot_since_attempt_ms =
+        boot_wifi_last_attempt_tick == 0
+            ? ai_keyboard::kBootWifiAutoconnectRetryMs
+            : static_cast<std::uint32_t>(
+                  (now_tick - boot_wifi_last_attempt_tick) *
+                  portTICK_PERIOD_MS);
     const std::uint32_t idle_elapsed_ms =
         session_active ? 0
                        : static_cast<std::uint32_t>((now_tick - last_network_activity) *
@@ -937,6 +1111,48 @@ void KeyboardAudioLink::run_control_channel() {
     if ((xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) == 0) {
       close_control_socket();
       ps_known = false;
+      if (boot_wifi_active) {
+        const auto boot_decision =
+            ai_keyboard::evaluate_boot_wifi_autoconnect({
+                boot_wifi_state,
+                protected_credentials,
+                false,
+                false,
+                boot_elapsed_ms,
+                boot_since_attempt_ms,
+            });
+        if (boot_decision.stop_wifi) {
+          stop_wifi_after_boot_autoconnect_timeout();
+          wait_for_control_work(kControlConfigPollMs);
+          continue;
+        }
+        if (boot_decision.attempt_connect) {
+          lock();
+          boot_wifi_last_attempt_tick_ = now_tick;
+          unlock();
+          last_wifi_attempt_tick = now_tick;
+          const bool has_saved_profile =
+              ai_keyboard::has_protected_wifi_profile(config.wifi_profiles);
+          if (has_saved_profile) {
+            last_wifi_scan_tick = now_tick;
+            const auto scan_err = connect_best_saved_wifi(config, "boot");
+            if (scan_err != ESP_OK) {
+              wifi_scan_retry_ms = std::min<std::uint32_t>(
+                  wifi_scan_retry_ms * 2U, kWifiRoamScanMaxRetryMs);
+              ESP_LOGW(kTag,
+                       "Wi-Fi saved-network scan failed reason=boot err=%s",
+                       esp_err_to_name(scan_err));
+            } else {
+              wifi_scan_retry_ms = kWifiRoamScanInitialRetryMs;
+            }
+          } else {
+            prepare_wifi_connection(config, "boot", false, false);
+          }
+        }
+        note_control_state("boot_wifi_waiting");
+        wait_for_control_work(kControlConfigPollMs);
+        continue;
+      }
       if ((deep_release && release_quiesced) || released_for_deep_sleep) {
         bool stay_released = false;
         {
@@ -944,7 +1160,7 @@ void KeyboardAudioLink::run_control_channel() {
           lock();
           const bool current_session_active =
               session_lifecycle_.active() || lease_armed_ ||
-              wifi_service_lease_.valid();
+              wifi_service_lease_.valid() || online_music_downlink_active_;
           const auto current_request_elapsed_ms =
               deep_sleep_release_requested_
                   ? static_cast<std::uint32_t>(
@@ -970,9 +1186,27 @@ void KeyboardAudioLink::run_control_channel() {
       }
       lock();
       const bool stream_active = session_lifecycle_.active();
+      const bool service_busy =
+          stream_active || lease_armed_ || wifi_service_lease_.valid() ||
+          online_music_downlink_active_;
       const bool reconnect_requested = wifi_reconnect_requested_;
       const auto reconnect_requested_tick = wifi_reconnect_requested_tick_;
       unlock();
+      // Boot timeout only ends the one-minute high-frequency startup window.
+      // Keep the low-duty saved-network roaming path alive so a board that was
+      // out of range at boot can still reconnect after it changes location.
+      const bool new_reconnect_request =
+          reconnect_requested && reconnect_requested_tick != 0 &&
+          reconnect_requested_tick != observed_wifi_reconnect_tick;
+      if (new_reconnect_request) {
+        observed_wifi_reconnect_tick = reconnect_requested_tick;
+        // A fresh link loss must not inherit a five-minute scan backoff from a
+        // previous outage. The next pass performs an immediate saved-profile
+        // scan, then resumes the bounded exponential schedule.
+        last_wifi_scan_tick = 0;
+        wifi_scan_retry_ms = kWifiRoamScanInitialRetryMs;
+        wifi_roam_retry_started = false;
+      }
       const bool activity_since_attempt =
           last_wifi_attempt_tick != 0 &&
           static_cast<std::int32_t>(last_network_activity - last_wifi_attempt_tick) > 0;
@@ -984,13 +1218,52 @@ void KeyboardAudioLink::run_control_channel() {
       const auto retry_interval_ms = urgent_reconnect
                                          ? kControlAudioTriggerWifiRetryMs
                                          : kControlWifiRetryMs;
-      if (!stream_active &&
-          (last_wifi_attempt_tick == 0 || activity_since_attempt ||
-           now_tick - last_wifi_attempt_tick >= pdMS_TO_TICKS(retry_interval_ms))) {
+      const bool has_saved_profile =
+          ai_keyboard::has_protected_wifi_profile(config.wifi_profiles);
+      const bool roam_scan_due =
+          has_saved_profile &&
+          (last_wifi_scan_tick == 0 ||
+           now_tick - last_wifi_scan_tick >= pdMS_TO_TICKS(wifi_scan_retry_ms));
+      if ((!service_busy || reconnect_requested) && roam_scan_due) {
+        last_wifi_scan_tick = now_tick;
+        const auto scan_err = connect_best_saved_wifi(config, "roam");
+        if (scan_err == ESP_OK) {
+          last_wifi_attempt_tick = now_tick;
+        }
+        if (wifi_roam_retry_started) {
+          wifi_scan_retry_ms = std::min<std::uint32_t>(
+              wifi_scan_retry_ms * 2U, kWifiRoamScanMaxRetryMs);
+        } else {
+          wifi_roam_retry_started = true;
+        }
+        if (scan_err != ESP_OK) {
+          note_control_state("wifi_roam_waiting");
+        }
+      } else if (!has_saved_profile && !stream_active &&
+                 (last_wifi_attempt_tick == 0 || activity_since_attempt ||
+                  now_tick - last_wifi_attempt_tick >= pdMS_TO_TICKS(retry_interval_ms))) {
         last_wifi_attempt_tick = now_tick;
         prepare_wifi_connection(config, "control", false, false);
       }
       note_control_state("waiting_wifi");
+      wait_for_control_work(kControlConfigPollMs);
+      continue;
+    }
+
+    if (boot_wifi_active) {
+      lock();
+      boot_wifi_autoconnect_state_ =
+          ai_keyboard::BootWifiAutoconnectState::Connected;
+      unlock();
+      ESP_LOGI(kTag, "boot Wi-Fi autoconnect succeeded");
+    }
+    last_wifi_scan_tick = 0;
+    wifi_scan_retry_ms = kWifiRoamScanInitialRetryMs;
+    wifi_roam_retry_started = false;
+
+    if (!config_ready) {
+      close_control_socket();
+      note_control_state("wifi_ready_boot_autoconnect");
       wait_for_control_work(kControlConfigPollMs);
       continue;
     }
@@ -1006,7 +1279,7 @@ void KeyboardAudioLink::run_control_channel() {
       lock();
       const bool current_session_active =
           session_lifecycle_.active() || lease_armed_ ||
-          wifi_service_lease_.valid();
+          wifi_service_lease_.valid() || online_music_downlink_active_;
       unlock();
       const wifi_ps_type_t ps_desired =
           current_session_active    ? WIFI_PS_NONE
@@ -1019,6 +1292,13 @@ void KeyboardAudioLink::run_control_channel() {
           ps_known = true;
         }
       }
+    }
+
+    if (online_only) {
+      close_control_socket();
+      note_control_state("wifi_ready_online_music");
+      wait_for_control_work(kControlConfigPollMs);
+      continue;
     }
 
     if (sock < 0) {
@@ -1290,7 +1570,8 @@ void KeyboardAudioLink::request_wifi_release_for_deep_sleep() {
   lock();
   const bool can_release = config_.enabled && !session_lifecycle_.active() &&
                            !lease_armed_ &&
-                           !wifi_service_lease_.valid();
+                           !wifi_service_lease_.valid() &&
+                           !online_music_downlink_active_;
   if (can_release && !deep_sleep_release_requested_) {
     deep_sleep_release_requested_ = true;
     deep_sleep_release_requested_tick_ = xTaskGetTickCount();
@@ -1389,7 +1670,8 @@ bool KeyboardAudioLink::stop_wifi_for_inactive_audio() {
   lock();
   const bool can_stop = !config_.enabled && task_ == nullptr &&
                         !session_lifecycle_.active() && !lease_armed_ &&
-                        !wifi_service_lease_.valid();
+                        !wifi_service_lease_.valid() &&
+                        !online_music_downlink_active_;
   const bool was_started = wifi_started_;
   if (can_stop) {
     wifi_reconnect_requested_ = false;
@@ -1435,7 +1717,8 @@ bool KeyboardAudioLink::begin_wifi_release_for_deep_sleep() {
 
   lock();
   const bool session_active = session_lifecycle_.active() || lease_armed_ ||
-                              wifi_service_lease_.valid();
+                              wifi_service_lease_.valid() ||
+                              online_music_downlink_active_;
   release_elapsed_ms = deep_sleep_release_requested_
                            ? static_cast<std::uint32_t>(
                                  (now - deep_sleep_release_requested_tick_) *
@@ -1523,7 +1806,8 @@ bool KeyboardAudioLink::wifi_active_or_streaming() const {
       (xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) != 0;
   lock();
   const bool streaming = session_lifecycle_.active() ||
-                         wifi_service_lease_.valid();
+                         wifi_service_lease_.valid() ||
+                         online_music_downlink_active_;
   const bool wifi_control_active =
       wifi_disconnect_pending_ || wifi_reconnect_requested_ ||
       (wifi_started_ && !wifi_released_for_deep_sleep_);
@@ -1538,7 +1822,9 @@ bool KeyboardAudioLink::shutdown_wifi_for_deep_sleep() {
   const bool no_work = !wifi_disconnect_pending_ &&
                        !wifi_reconnect_requested_ &&
                        !session_lifecycle_.active() && !lease_armed_ &&
-                       !wifi_service_lease_.valid() && pending_config_json_.empty();
+                       !wifi_service_lease_.valid() &&
+                       !online_music_downlink_active_ &&
+                       pending_config_json_.empty();
   const bool safe = no_work &&
                     (!started || (deep_sleep_release_requested_ &&
                                   wifi_released_for_deep_sleep_));
@@ -1611,6 +1897,7 @@ bool KeyboardAudioLink::acquire_wifi_service_lease(
       config_.speaker_sync_key_valid &&
       config_.speaker_sync_key_epoch != 0U &&
       !wifi_service_lease_.valid() &&
+      !online_music_downlink_active_ &&
       next_wifi_service_lease_id_ != 0U;
   if (ready) {
     wifi_service_lease_ = {
@@ -1680,6 +1967,49 @@ bool KeyboardAudioLink::acquire_wifi_service_lease(
       static_cast<unsigned long>(lease->generation),
       static_cast<unsigned long>(lease->lease_id));
   return true;
+}
+
+bool KeyboardAudioLink::acquire_online_music_downlink() {
+  note_network_activity();
+  WifiOpGuard wifi_guard(wifi_op_mutex_);
+  const bool connected =
+      wifi_events_ != nullptr &&
+      (xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) != 0;
+  lock();
+  const bool ready = connected && !wifi_disconnect_pending_ &&
+                     !wifi_service_lease_.valid() &&
+                     !online_music_downlink_active_;
+  if (ready) {
+    online_music_downlink_active_ = true;
+  }
+  unlock();
+  if (!ready) {
+    return false;
+  }
+
+  const esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
+  if (err != ESP_OK) {
+    lock();
+    online_music_downlink_active_ = false;
+    unlock();
+    return false;
+  }
+  wifi_ingress_power_generation_.fetch_add(1U, std::memory_order_acq_rel);
+  if (control_task_ != nullptr) {
+    xTaskNotifyGive(control_task_);
+  }
+  return true;
+}
+
+void KeyboardAudioLink::release_online_music_downlink() {
+  WifiOpGuard wifi_guard(wifi_op_mutex_);
+  lock();
+  const bool was_active = online_music_downlink_active_;
+  online_music_downlink_active_ = false;
+  unlock();
+  if (was_active && control_task_ != nullptr) {
+    xTaskNotifyGive(control_task_);
+  }
 }
 
 bool KeyboardAudioLink::release_wifi_service_lease(
@@ -1759,15 +2089,21 @@ void KeyboardAudioLink::event_handler(void* arg,
     if (coordinated_release) {
       link->wifi_released_for_deep_sleep_ = true;
     } else {
-      // An unexpected AP/link drop during microphone or speaker traffic must
+      // An unexpected AP/link drop during microphone, speaker, or a previously
+      // successful boot-only Wi-Fi session must
       // enter the existing 12-second urgent reconnect window immediately.
       // Otherwise the ordinary 10-second idle retry races the App's carrier
       // discovery window and a present keyboard is reported as missing.
+      const bool has_saved_profile =
+          ai_keyboard::has_protected_wifi_profile(link->config_.wifi_profiles);
       should_reconnect =
-          link->config_.enabled &&
-          !link->config_.wifi_ssid.empty() &&
-          !link->config_.host.empty() &&
-          link->config_.port != 0;
+          (link->config_.enabled ||
+           link->boot_wifi_autoconnect_state_ ==
+               ai_keyboard::BootWifiAutoconnectState::Connected) &&
+          has_saved_profile &&
+          (link->boot_wifi_autoconnect_state_ ==
+               ai_keyboard::BootWifiAutoconnectState::Connected ||
+           (!link->config_.host.empty() && link->config_.port != 0));
       if (should_reconnect) {
         link->wifi_reconnect_requested_ = true;
         link->wifi_reconnect_requested_tick_ =
@@ -1791,6 +2127,8 @@ void KeyboardAudioLink::event_handler(void* arg,
 
   if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     link->lock();
+    link->boot_wifi_autoconnect_state_ =
+        ai_keyboard::BootWifiAutoconnectState::Connected;
     link->wifi_disconnect_pending_ = false;
     link->wifi_reconnect_requested_ = false;
     link->wifi_reconnect_requested_tick_ = 0;
@@ -2355,6 +2693,64 @@ void KeyboardAudioLink::preconnect_wifi(const char* reason) {
            reason == nullptr ? "" : reason);
 }
 
+esp_err_t KeyboardAudioLink::connect_best_saved_wifi(
+    const KeyboardAudioConfig& config, const char* reason) {
+  ai_keyboard::WifiRoamingCandidate selected{};
+  {
+    WifiOpGuard wifi_guard(wifi_op_mutex_);
+    if (!wifi_started_) {
+      const esp_err_t start_err = esp_wifi_start();
+      if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_CONN) {
+        return start_err;
+      }
+      wifi_started_ = true;
+    }
+
+    wifi_scan_config_t scan_config = {};
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    if (err != ESP_OK) {
+      return err;
+    }
+    std::uint16_t ap_count = 0U;
+    err = esp_wifi_scan_get_ap_num(&ap_count);
+    if (err != ESP_OK) {
+      esp_wifi_clear_ap_list();
+      return err;
+    }
+    const auto records_to_check = std::min<std::uint16_t>(
+        ap_count, static_cast<std::uint16_t>(kWifiRoamMaxScanRecords));
+    for (std::uint16_t record_index = 0U;
+         record_index < records_to_check; ++record_index) {
+      wifi_ap_record_t record{};
+      err = esp_wifi_scan_get_ap_record(&record);
+      if (err != ESP_OK) {
+        esp_wifi_clear_ap_list();
+        return err;
+      }
+      const std::string_view visible_ssid(
+          reinterpret_cast<const char*>(record.ssid),
+          strnlen(reinterpret_cast<const char*>(record.ssid),
+                  sizeof(record.ssid)));
+      selected = ai_keyboard::consider_wifi_roaming_candidate(
+          config.wifi_profiles, visible_ssid, record.rssi, selected);
+    }
+    esp_wifi_clear_ap_list();
+  }
+
+  if (!selected.valid()) {
+    return ESP_ERR_NOT_FOUND;
+  }
+  KeyboardAudioConfig selected_config = config;
+  selected_config.wifi_ssid =
+      config.wifi_profiles[selected.profile_index].ssid;
+  selected_config.wifi_password =
+      config.wifi_profiles[selected.profile_index].password;
+  ESP_LOGI(kTag,
+           "keyboard mic Wi-Fi roaming candidate selected reason=%s",
+           reason == nullptr ? "" : reason);
+  return prepare_wifi_connection(selected_config, reason, false, false);
+}
+
 esp_err_t KeyboardAudioLink::ensure_wifi_ready(const KeyboardAudioConfig& config,
                                                std::uint32_t generation) {
   return prepare_wifi_connection(config, "stream", true, true, generation);
@@ -2379,11 +2775,27 @@ esp_err_t KeyboardAudioLink::prepare_wifi_connection(const KeyboardAudioConfig& 
     // 防止 set_config/disconnect 交错取消对方进行中的 connect。
     WifiOpGuard wifi_guard(wifi_op_mutex_);
 
+    const bool connected =
+        (xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) != 0;
+    const bool connected_to_saved_profile =
+        connected && std::any_of(
+            config.wifi_profiles.begin(), config.wifi_profiles.end(),
+            [this](const ai_keyboard::WifiProfile& profile) {
+              return profile.configured() && !profile.password.empty() &&
+                     profile.ssid == wifi_configured_ssid_ &&
+                     profile.password == wifi_configured_password_;
+            });
+    if (connected_to_saved_profile) {
+      mark_control_state("wifi_ready");
+      ESP_LOGI(kTag,
+               "keyboard mic reusing saved Wi-Fi reason=%s",
+               reason == nullptr ? "" : reason);
+      return ESP_OK;
+    }
     const bool same_wifi_config = wifi_started_ &&
                                   wifi_configured_ssid_ == config.wifi_ssid &&
                                   wifi_configured_password_ == config.wifi_password;
-    if (same_wifi_config &&
-        (xEventGroupGetBits(wifi_events_) & kWifiConnectedBit) != 0) {
+    if (same_wifi_config && connected) {
       mark_control_state("wifi_ready");
       ESP_LOGI(kTag,
                "keyboard mic reusing connected Wi-Fi reason=%s",

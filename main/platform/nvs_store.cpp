@@ -1,5 +1,7 @@
 #include "platform/nvs_store.h"
 
+#include <cstdio>
+#include <utility>
 #include <vector>
 
 #include "esp_log.h"
@@ -20,6 +22,10 @@ constexpr const char* kPrefsBatteryFullKeyV3 = "bat_full_v3";
 constexpr const char* kPrefsGattSchemaRevisionKey = "gatt_rev_v1";
 constexpr const char* kPrefsHostPlatformKey = "host_os_v1";
 constexpr const char* kPrefsLedBrightnessKey = "led_brt_v1";
+constexpr const char* kPrefsOnlineMusicApiKey = "om_asr_key_v1";
+constexpr const char* kPrefsOnlineMusicWorkspaceKey = "om_asr_ws_v1";
+constexpr const char* kPrefsWifiProfileSsidPrefix = "wifi_p_ssid_";
+constexpr const char* kPrefsWifiProfilePasswordPrefix = "wifi_p_pwd_";
 
 const char* prefs_config_key() {
 #if defined(EASY_INPUT_BOARD_V2)
@@ -41,6 +47,31 @@ void set_error(esp_err_t* out_err, esp_err_t err) {
   if (out_err != nullptr) {
     *out_err = err;
   }
+}
+
+esp_err_t read_string(nvs_handle_t handle,
+                      const char* key,
+                      std::string* value) {
+  std::size_t required_len = 0U;
+  esp_err_t err = nvs_get_str(handle, key, nullptr, &required_len);
+  if (err != ESP_OK) return err;
+  if (required_len <= 1U) return ESP_ERR_INVALID_SIZE;
+  std::vector<char> buffer(required_len);
+  err = nvs_get_str(handle, key, buffer.data(), &required_len);
+  if (err == ESP_OK) value->assign(buffer.data());
+  return err;
+}
+
+}  // namespace
+
+namespace {
+
+void wifi_profile_key(char* buffer,
+                      std::size_t capacity,
+                      const char* prefix,
+                      std::size_t index) {
+  std::snprintf(buffer, capacity, "%s%u", prefix,
+                static_cast<unsigned>(index));
 }
 
 }  // namespace
@@ -348,6 +379,147 @@ bool NvsConfigStore::save_config_and_host_platform(
              prefs_config_key(),
              static_cast<unsigned>(json.size()),
              ai_keyboard::host_platform_name(platform));
+  }
+  set_error(out_err, err);
+  return err == ESP_OK;
+}
+
+bool NvsConfigStore::load_wifi_profiles(WifiProfileList* profiles,
+                                        esp_err_t* out_err) const {
+  if (profiles == nullptr) {
+    set_error(out_err, ESP_ERR_INVALID_ARG);
+    return false;
+  }
+  *profiles = {};
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(kPrefsNamespace, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    set_error(out_err, err);
+    return false;
+  }
+  bool any = false;
+  for (std::size_t index = 0; index < profiles->size(); ++index) {
+    char ssid_key[16] = {};
+    char password_key[16] = {};
+    wifi_profile_key(ssid_key, sizeof(ssid_key), kPrefsWifiProfileSsidPrefix, index);
+    wifi_profile_key(password_key, sizeof(password_key), kPrefsWifiProfilePasswordPrefix, index);
+    std::string ssid;
+    if (read_string(handle, ssid_key, &ssid) != ESP_OK) {
+      continue;
+    }
+    std::string password;
+    const esp_err_t password_err = read_string(handle, password_key, &password);
+    if (password_err != ESP_OK && password_err != ESP_ERR_NVS_NOT_FOUND) {
+      continue;
+    }
+    (*profiles)[index] = {std::move(ssid), std::move(password)};
+    any = true;
+  }
+  nvs_close(handle);
+  set_error(out_err, any ? ESP_OK : ESP_ERR_NVS_NOT_FOUND);
+  return any;
+}
+
+bool NvsConfigStore::save_wifi_profile(const WifiProfile& profile,
+                                       esp_err_t* out_err) const {
+  if (!profile.configured()) {
+    set_error(out_err, ESP_ERR_INVALID_ARG);
+    return false;
+  }
+  WifiProfileList profiles{};
+  esp_err_t load_err = ESP_OK;
+  load_wifi_profiles(&profiles, &load_err);
+  if (profiles[0].ssid == profile.ssid &&
+      profiles[0].password == profile.password) {
+    set_error(out_err, ESP_OK);
+    return true;
+  }
+  WifiProfileList reordered{};
+  reordered[0] = profile;
+  std::size_t next = 1U;
+  for (const auto& existing : profiles) {
+    if (!existing.configured() || existing.ssid == profile.ssid) {
+      continue;
+    }
+    if (next >= reordered.size()) {
+      break;
+    }
+    reordered[next++] = existing;
+  }
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(kPrefsNamespace, NVS_READWRITE, &handle);
+  if (err == ESP_OK) {
+    for (std::size_t index = 0; index < reordered.size(); ++index) {
+      char ssid_key[16] = {};
+      char password_key[16] = {};
+      wifi_profile_key(ssid_key, sizeof(ssid_key), kPrefsWifiProfileSsidPrefix, index);
+      wifi_profile_key(password_key, sizeof(password_key), kPrefsWifiProfilePasswordPrefix, index);
+      if (reordered[index].configured()) {
+        err = nvs_set_str(handle, ssid_key, reordered[index].ssid.c_str());
+        if (err == ESP_OK) {
+          err = nvs_set_str(handle, password_key, reordered[index].password.c_str());
+        }
+      } else {
+        err = nvs_erase_key(handle, ssid_key);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        if (err == ESP_OK) {
+          err = nvs_erase_key(handle, password_key);
+          if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        }
+      }
+      if (err != ESP_OK) break;
+    }
+  }
+  if (err == ESP_OK) err = nvs_commit(handle);
+  if (handle != 0) nvs_close(handle);
+  set_error(out_err, err);
+  return err == ESP_OK;
+}
+
+bool NvsConfigStore::load_online_music_credentials(
+    OnlineMusicCredentials* credentials,
+    esp_err_t* out_err) const {
+  if (credentials == nullptr) {
+    set_error(out_err, ESP_ERR_INVALID_ARG);
+    return false;
+  }
+  *credentials = {};
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(kPrefsNamespace, NVS_READONLY, &handle);
+  if (err == ESP_OK) {
+    err = read_string(handle, kPrefsOnlineMusicApiKey, &credentials->api_key);
+  }
+  if (err == ESP_OK) {
+    err = read_string(handle, kPrefsOnlineMusicWorkspaceKey,
+                      &credentials->workspace_id);
+  }
+  if (handle != 0) nvs_close(handle);
+  if (err != ESP_OK) *credentials = {};
+  set_error(out_err, err);
+  return err == ESP_OK;
+}
+
+bool NvsConfigStore::save_online_music_credentials(
+    const OnlineMusicCredentials& credentials,
+    esp_err_t* out_err) const {
+  if (credentials.api_key.empty() || credentials.workspace_id.empty()) {
+    set_error(out_err, ESP_ERR_INVALID_ARG);
+    return false;
+  }
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(kPrefsNamespace, NVS_READWRITE, &handle);
+  if (err == ESP_OK) {
+    err = nvs_set_str(handle, kPrefsOnlineMusicApiKey,
+                      credentials.api_key.c_str());
+  }
+  if (err == ESP_OK) {
+    err = nvs_set_str(handle, kPrefsOnlineMusicWorkspaceKey,
+                      credentials.workspace_id.c_str());
+  }
+  if (err == ESP_OK) err = nvs_commit(handle);
+  if (handle != 0) nvs_close(handle);
+  if (err == ESP_OK) {
+    ESP_LOGI(kTag, "saved online music credentials configured=1");
   }
   set_error(out_err, err);
   return err == ESP_OK;

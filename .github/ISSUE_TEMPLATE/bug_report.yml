@@ -1,29 +1,79 @@
 name: Bug report
-description: Report a reproducible firmware or documentation problem.
-title: "[Bug] "
-labels: [bug]
+description: Report a reproducible problem in EasyInput Maker
+title: "[Bug]: "
+labels:
+  - bug
 body:
   - type: markdown
     attributes:
-      value: "Please remove personal paths, device identifiers, credentials, and private logs."
+      value: |
+        Thank you for reporting a problem. Remove credentials, device identifiers, personal paths, and unrelated logs. Report security vulnerabilities through SECURITY.md.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report does not contain security-sensitive or confidential information.
+          required: true
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      options:
+        - EasyInput V2.0 / firmware board v2 / PCB marking AI Keyboard V2.1
+        - Another or unknown board
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Firmware revision
+      description: Tag, commit ID, or other public revision identifier.
+    validations:
+      required: true
   - type: textarea
     id: expected
     attributes:
       label: Expected behavior
-      description: What should happen?
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
       label: Actual behavior
-      description: What happened, and what is the smallest reproduction?
     validations:
       required: true
-  - type: input
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest repeatable sequence.
+      placeholder: |
+        1. Power on the board
+        2. ...
+    validations:
+      required: true
+  - type: textarea
     id: environment
     attributes:
-      label: Environment
-      description: Board, OS, ESP-IDF version, and command used.
+      label: Build and runtime environment
+      description: Operating system, ESP-IDF version, connection type, and relevant public configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Logs, screenshots, or measurements with credentials, identifiers, and personal paths removed.
+  - type: dropdown
+    id: verification
+    attributes:
+      label: Evidence level
+      options:
+        - Observed on physical hardware
+        - Build or automated test only
+        - Static code inspection only
     validations:
       required: true

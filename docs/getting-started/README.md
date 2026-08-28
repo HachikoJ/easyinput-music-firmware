@@ -17,8 +17,8 @@ ESP-IDF 的安装与环境激活请使用乐鑫官方的 [ESP-IDF 5.5.5 ESP32-S3
 只想直接使用固件或在本地完成课程练习，可以下载官方仓库：
 
 ```bash
-git clone https://github.com/CY-CHENYUE/easy-input-maker.git
-cd easy-input-maker
+git clone https://github.com/HachikoJ/easyinput-music-firmware.git
+cd easyinput-music-firmware
 ```
 
 不要把 Wi-Fi 密码、同步密钥或本机配置提交到仓库。构建目录、`sdkconfig`、密钥文件和常见本机配置已由 `.gitignore` 默认排除。

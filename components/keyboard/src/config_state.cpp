@@ -88,6 +88,18 @@ std::uint16_t ConfigState::speaker_sync_key_epoch() const {
   return current_.speaker_sync_key_epoch;
 }
 
+bool ConfigState::online_music_enabled() const {
+  return current_.online_music_enabled;
+}
+
+const std::string& ConfigState::online_music_asr_api_key() const {
+  return current_.online_music_asr_api_key;
+}
+
+const std::string& ConfigState::online_music_asr_workspace_id() const {
+  return current_.online_music_asr_workspace_id;
+}
+
 const std::string& ConfigState::last_applied_json() const {
   return last_applied_json_;
 }

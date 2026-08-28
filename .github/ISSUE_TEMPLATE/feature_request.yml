@@ -1,18 +1,58 @@
 name: Feature request
-description: Suggest a focused, testable improvement.
-title: "[Feature] "
-labels: [enhancement]
+description: Suggest a non-commercial learning or Maker feature
+title: "[Feature]: "
+labels:
+  - enhancement
 body:
-  - type: textarea
-    id: problem
+  - type: markdown
     attributes:
-      label: Problem and use case
+      value: |
+        Describe the user need first. Proposed protocols, authentication, pin use, and power behavior remain subject to hardware and security review.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and requests.
+          required: true
+        - label: The request fits personal learning, research, teaching, or non-commercial Maker use.
+          required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: User need
+      description: What should a learner or Maker be able to accomplish?
     validations:
       required: true
   - type: textarea
-    id: result
+    id: scenario
     attributes:
-      label: Observable result
-      description: Describe the behavior that should be verifiable on host or board.
+      label: Example scenario
+      description: Describe one concrete end-to-end use case.
     validations:
       required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected behavior
+      description: Describe the observable result without assuming an unreviewed implementation.
+    validations:
+      required: true
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Areas involved
+      options:
+        - label: Buttons or encoder
+        - label: LEDs
+        - label: USB or BLE
+        - label: Wi-Fi or networking
+        - label: Microphone or speaker
+        - label: Battery, power, sleep, or wake
+        - label: Configuration or persistent storage
+        - label: Documentation or AI-assisted development
+  - type: textarea
+    id: evidence
+    attributes:
+      label: References or prototype evidence
+      description: Public standards, documentation, test results, or a non-commercial prototype. Do not include confidential material.

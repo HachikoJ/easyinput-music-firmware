@@ -86,6 +86,15 @@ struct BatteryStatusSnapshot {
   bool full_anchor_ready = false;
 };
 
+struct OnlineMusicStatusSnapshot {
+  bool present = false;
+  bool credentials_configured = false;
+  bool busy = false;
+  std::string last_failure;
+  int websocket_http_status = -1;
+  std::string server_error_code;
+};
+
 struct ConfigStatusSnapshot {
   std::string firmware;
   std::string phase;
@@ -109,6 +118,7 @@ struct ConfigStatusSnapshot {
   // Synchronously consumed optional diagnostic view. The normal production
   // status stack frame stays pointer-sized and does not carry the probe POD.
   const SpeakerProbeSnapshot* speaker = nullptr;
+  OnlineMusicStatusSnapshot online_music;
 };
 
 std::string build_config_status_json(const ConfigStatusSnapshot& snapshot);

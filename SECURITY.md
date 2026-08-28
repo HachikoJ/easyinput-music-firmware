@@ -10,7 +10,7 @@ Do not open a public issue containing exploit details, credentials, device ident
 
 Use GitHub Private Vulnerability Reporting:
 
-<https://github.com/CY-CHENYUE/easy-input-maker/security/advisories/new>
+<https://github.com/HachikoJ/easyinput-music-firmware/security/advisories/new>
 
 If private reporting is not yet enabled, use the “Request a private security contact” issue form. Do not include vulnerability details in that public request.
 

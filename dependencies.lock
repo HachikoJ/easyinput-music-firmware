@@ -1,4 +1,14 @@
 dependencies:
+  espressif/esp_audio_codec:
+    component_hash: 16e2880dbdd5a72264051f750f33a6e5a38fd25621c83e3a32a85a152d2d2643
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.0
   espressif/esp_tinyusb:
     component_hash: 6a50305bc61c7a361da8c0833642be824e92dacb0a6001719a832a4e96e471bf
     dependencies:
@@ -34,8 +44,9 @@ dependencies:
       type: idf
     version: 5.5.5
 direct_dependencies:
+- espressif/esp_audio_codec
 - espressif/esp_tinyusb
 - idf
-manifest_hash: 9f7796b6fd57b3909224319dd92d211ff1cb37cc041af96fafcaa2fceadac4fa
+manifest_hash: 0d7653943706f2de6bdaa1a927ccef66524a499b6269d47a99f2a50b3c110f69
 target: esp32s3
 version: 2.0.0

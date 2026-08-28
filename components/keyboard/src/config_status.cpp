@@ -392,6 +392,41 @@ void append_compact_speaker_boot(
       << "}";
 }
 
+void append_online_music_status(
+    std::ostringstream& out,
+    bool* first,
+    const OnlineMusicStatusSnapshot& online_music) {
+  if (!online_music.present) {
+    return;
+  }
+  append_object_separator(out, first);
+  out << "\"online_music\":{";
+  bool first_online = true;
+  append_bool_field(out,
+                    &first_online,
+                    "credentials_configured",
+                    online_music.credentials_configured);
+  append_bool_field(out, &first_online, "busy", online_music.busy);
+  append_bounded_string_field(out,
+                              &first_online,
+                              "last_failure",
+                              online_music.last_failure,
+                              32,
+                              "none");
+  if (online_music.websocket_http_status >= 0) {
+    append_int_field(out,
+                     &first_online,
+                     "websocket_http_status",
+                     online_music.websocket_http_status);
+  }
+  append_bounded_string_field(out,
+                              &first_online,
+                              "server_error_code",
+                              online_music.server_error_code,
+                              64);
+  out << "}";
+}
+
 std::string build_compact_status_json(const ConfigStatusSnapshot& snapshot,
                                       bool include_fingerprint,
                                       bool include_battery_detail,
@@ -860,12 +895,24 @@ std::string build_config_status_json(const ConfigStatusSnapshot& snapshot) {
 }
 
 std::string build_config_confirmation_status_json(const ConfigStatusSnapshot& snapshot) {
-  return build_compact_status_json(snapshot,
-                                   true,
-                                   false,
-                                   false,
-                                   false,
-                                   false);
+  auto json = build_compact_status_json(snapshot,
+                                        true,
+                                        false,
+                                        false,
+                                        false,
+                                        false,
+                                        true,
+                                        !snapshot.online_music.present);
+  if (!snapshot.online_music.present || json.empty() || json.back() != '}') {
+    return json;
+  }
+  json.pop_back();
+  std::ostringstream online;
+  bool first = false;
+  append_online_music_status(online, &first, snapshot.online_music);
+  json += online.str();
+  json += "}";
+  return json;
 }
 
 }  // namespace ai_keyboard

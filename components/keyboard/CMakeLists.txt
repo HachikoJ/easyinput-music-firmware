@@ -5,6 +5,7 @@ idf_component_register(
     "src/audio_control_wire.cpp"
     "src/awake_wait_planner.cpp"
     "src/boot_led_sequence.cpp"
+    "src/boot_wifi_autoconnect.cpp"
     "src/cold_boot_feedback.cpp"
     "src/battery_estimator.cpp"
     "src/ble_advertising_state.cpp"
@@ -27,6 +28,8 @@ idf_component_register(
     "src/input_test.cpp"
     "src/led_brightness_mode.cpp"
     "src/music_mode.cpp"
+    "src/online_music_mode.cpp"
+    "src/online_music_progress.cpp"
     "src/keyboard_snapshot_delivery.cpp"
     "src/keymap.cpp"
     "src/platform_selection.cpp"
@@ -38,6 +41,7 @@ idf_component_register(
     "src/speaker_service_startup.cpp"
     "src/status_hid_protocol.cpp"
     "src/transport_routing.cpp"
+    "src/wifi_roaming.cpp"
   INCLUDE_DIRS
     "include"
 )

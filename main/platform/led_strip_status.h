@@ -11,6 +11,7 @@
 #include "keyboard/boot_led_sequence.h"
 #include "keyboard/input_feedback.h"
 #include "keyboard/keymap.h"
+#include "keyboard/online_music_progress.h"
 
 namespace easy_input {
 
@@ -29,6 +30,8 @@ enum class StatusLedEvent {
   PlatformMacOS,
   PlatformWindows,
   SaveFailed,
+  OnlineMusicRecognitionFailed,
+  OnlineMusicPlaybackFailed,
 };
 
 class StatusLedStrip {
@@ -59,6 +62,9 @@ class StatusLedStrip {
   void set_music_audio_level(std::uint16_t rms_milli,
                              std::uint16_t beat_milli,
                              std::uint32_t now_ms);
+  void set_online_music_progress(
+      const ai_keyboard::OnlineMusicProgress& progress,
+      std::uint32_t now_ms);
   void update(std::uint32_t now_ms);
   bool next_update_deadline_ms(std::uint32_t now_ms,
                                std::uint32_t* deadline_ms) const;
@@ -77,6 +83,7 @@ class StatusLedStrip {
   bool agent_status_valid(std::uint32_t now_ms) const;
   void render_background_status(std::uint32_t now_ms);
   void render_agent_status();
+  void render_online_music_progress(std::uint32_t now_ms);
   void render_idle_status();
   void set_all(Rgb color);
   void render_active_effect();
@@ -109,6 +116,7 @@ class StatusLedStrip {
   std::uint16_t music_beat_milli_ = 0;
   std::uint32_t music_last_frame_ms_ = 0;
   std::uint8_t music_color_phase_ = 0;
+  ai_keyboard::OnlineMusicProgress online_music_progress_;
 };
 
 }  // namespace easy_input

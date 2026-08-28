@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="EasyInput V2.0 ESP32-S3 offline music firmware demo.">
-  <meta property="og:title" content="EasyInput Offline Music Firmware">
-  <meta property="og:description" content="On-board Ogg Opus decoding, speaker playback, volume control, and multi-color beat breathing.">
+  <meta name="description" content="EasyInput V2.0 ESP32-S3 online music firmware with Alibaba Cloud ASR, GD Studio search, and on-board MP3 playback.">
+  <meta property="og:title" content="EasyInput Online Music Firmware">
+  <meta property="og:description" content="Voice search, Wi-Fi stream resolution, on-board MP3 decoding, volume control, and beat-reactive LEDs.">
   <meta property="og:image" content="assets/music-playback-demo.jpg">
   <meta name="theme-color" content="#0b1020">
   <link rel="icon" href="assets/easyinput-mark.svg" type="image/svg+xml">
-  <title>EasyInput Offline Music Firmware</title>
+  <title>EasyInput Online Music Firmware</title>
   <style>
     :root { --bg:#080b14; --panel:#111827; --panel-2:#151d2f; --line:#29354a; --text:#f7fafc; --muted:#b7c3d6; --teal:#2dd4bf; --amber:#fbbf24; }
     * { box-sizing:border-box; }
@@ -54,39 +54,50 @@
 <body id="top">
   <header class="nav">
     <div class="wrap nav-inner">
-      <a class="brand" href="#top"><img src="assets/easyinput-mark.svg" alt="EasyInput">EasyInput Music Firmware</a>
-      <nav class="nav-links" aria-label="Project navigation"><a href="#demo">Demo</a><a href="#controls">Controls</a><a href="#build">Build</a><a href="https://github.com/HachikoJ/easyinput-music-firmware">Source</a></nav>
+      <a class="brand" href="#top"><img src="assets/easyinput-mark.svg" alt="EasyInput">EasyInput Online Music</a>
+      <nav class="nav-links" aria-label="Project navigation"><a href="#demo">Demo</a><a href="#controls">Controls</a><a href="#setup">Setup</a><a href="#build">Build</a><a href="https://github.com/HachikoJ/easyinput-music-firmware">Source</a></nav>
     </div>
   </header>
   <main>
     <div class="wrap">
       <section class="hero" id="demo" style="border-top:0; padding-top:18px;">
         <div>
-          <div class="eyebrow">EasyInput V2.0 · ESP32-S3 · Offline</div>
-          <h1>音乐在板上解码，灯光跟着节奏呼吸。</h1>
-          <p class="lead">两首 Ogg Opus 音乐存储在本地 Flash，由开发板直接解码并播放。旋钮控制音量与暂停，S1-S8 控制播放列表，D1-D5 输出多色节奏灯效。</p>
+          <div class="eyebrow">EasyInput V2.0 · ESP32-S3 · Online</div>
+          <h1>说出歌名，音乐在板上播放。</h1>
+          <p class="lead">开发板通过 Wi-Fi 录音，阿里云百炼识别歌曲关键词，GD Studio API 解析播放链接，ESP32 自己解码 MP3 并从扬声器输出。旋钮调音量/暂停，D1-D5 跟随阶段和节拍变化。</p>
           <div class="actions"><a class="button primary" href="#controls">查看按键逻辑</a><a class="button" href="https://github.com/HachikoJ/easyinput-music-firmware">打开源码</a></div>
         </div>
         <figure class="video-frame"><video controls preload="metadata" poster="assets/music-playback-demo.jpg"><source src="assets/music-playback-demo.mp4" type="video/mp4">Your browser does not support HTML video.</video><figcaption>开发版本地播放音乐实机演示 · 36 秒</figcaption></figure>
       </section>
       <section id="controls">
-        <div class="section-head"><h2>Controls / 操作</h2><p>进入音乐模式后，S1-S8 原有快捷键暂时让位给播放控制。</p></div>
-        <div class="grid"><article class="item"><h3>模式</h3><p>旋钮短按双击进入或退出音乐模式。</p></article><article class="item"><h3>播放</h3><p>任意 S1-S8 开始第一首；再次按下切换下一首并无限循环。</p></article><article class="item"><h3>暂停与音量</h3><p>单击旋钮暂停/继续；左旋降低、右旋提高，默认 <strong>15%</strong>。</p></article><article class="item"><h3>灯效</h3><p>D1-D5 根据音频 RMS 与节拍输出多色动态呼吸。</p></article><article class="item"><h3>本地解码</h3><p>音频从板载 Flash 读取，播放链路不依赖 Wi-Fi 或电脑。</p></article><article class="item"><h3>容量边界</h3><p>测试 App 分区保留 49% 空间，DIRAM 余量 153,661 bytes。</p></article></div>
+        <div class="section-head"><h2>Controls / 操作</h2><p>在线模式内 S1-S8 暂时屏蔽原有快捷键，退出后恢复。</p></div>
+        <div class="grid"><article class="item"><h3>进入 / 退出</h3><p>旋钮短按双击，两次间隔 251–500 ms；再次双击退出。</p></article><article class="item"><h3>语音搜索</h3><p>按任意 S1-S8 开始录音，松开结束；最长 10 秒，识别后自动搜索并播放。</p></article><article class="item"><h3>暂停与音量</h3><p>单击旋钮暂停/继续；左旋降低、右旋提高，默认 <strong>15%</strong>，每格 5%。</p></article><article class="item"><h3>切歌</h3><p>播放中再次按任意 S1-S8 重新录音并按新查询切歌。</p></article><article class="item"><h3>灯效</h3><p>D1-D5 显示录音、识别、搜索、解析、起播，再变为彩色节奏呼吸。</p></article><article class="item"><h3>板载输出</h3><p>电脑只写入配置；Wi-Fi 音频流由 ESP32 解码并从开发板扬声器播放。</p></article></div>
+      </section>
+      <section id="setup">
+        <div class="section-head"><h2>Setup / 配置</h2><p>阿里云凭据由用户自行申请和承担费用；占位符不能直接使用。</p></div>
+        <div class="grid"><article class="item"><h3>1 · 阿里云</h3><p>百炼创建 Workspace，开通实时 ASR，取得 API Key 和 Workspace ID。默认模型为 qwen-audio-3.0-asr-flash-streaming。</p></article><article class="item"><h3>2 · 写入设备</h3><p>通过兼容 USB/BLE 配置工具写入 `ai_keyboard.v1` JSON；凭据保存到 NVS，不会出现在状态回执或日志。</p></article><article class="item"><h3>3 · 网络</h3><p>同时写入 Wi-Fi SSID/密码。GD Studio API 和上游音乐源必须可达，版权由使用者自行确认。</p></article></div>
+        <pre class="code"><code>{
+  "schema": "ai_keyboard.v1",
+  "wifi_ssid": "YOUR_WIFI_SSID",
+  "wifi_password": "YOUR_WIFI_PASSWORD",
+  "online_music_enabled": true,
+  "online_music_asr_api_key": "YOUR_ALIYUN_API_KEY",
+  "online_music_asr_workspace_id": "YOUR_WORKSPACE_ID"
+}</code></pre>
       </section>
       <section id="build">
-        <div class="section-head"><h2>Build / 构建</h2><p>音乐文件是外部输入，不随公开源码发布。请使用有授权的 Ogg Opus 文件。</p></div>
-        <pre class="code"><code>idf.py -B build-music \
-  -D EASY_INPUT_MUSIC_PLAYER=ON \
-  -D EASY_INPUT_SPEAKER_ASSETS_PRODUCT=OFF \
-  -D EASY_INPUT_SPEAKER_DIAGNOSTIC=OFF \
-  -D EASY_INPUT_MUSIC_TRACK_0="/absolute/path/track-0.ogg" \
-  -D EASY_INPUT_MUSIC_TRACK_1="/absolute/path/track-1.ogg" \
-  build</code></pre>
-        <div class="actions"><a class="button primary" href="https://github.com/HachikoJ/easyinput-music-firmware#easyinput-offline-music-firmware">完整构建说明</a><a class="button" href="https://github.com/HachikoJ/easyinput-music-firmware/issues">反馈问题</a></div>
+        <div class="section-head"><h2>Build / 构建</h2><p>默认构建在线音乐能力，不嵌入商业歌曲；需要 ESP-IDF 5.5.5 和 ESP32-S3 工具链。</p></div>
+        <pre class="code"><code>git clone https://github.com/HachikoJ/easyinput-music-firmware.git
+cd easyinput-music-firmware
+idf.py build
+cmake -S host_test -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host --parallel
+ctest --test-dir build-host --output-on-failure</code></pre>
+        <div class="actions"><a class="button primary" href="https://github.com/HachikoJ/easyinput-music-firmware/blob/main/docs/online-music.md">在线音乐完整手册</a><a class="button" href="https://github.com/HachikoJ/easyinput-music-firmware/issues">反馈问题</a></div>
       </section>
     </div>
   </main>
-  <footer><div class="wrap">EasyInput Offline Music Firmware · ESP-IDF 5.5.5 · Noncommercial hardware study build</div></footer>
+  <footer><div class="wrap">EasyInput Online Music Firmware · ESP-IDF 5.5.5 · GD Studio API attribution required · Noncommercial study build</div></footer>
   <a class="top" href="#top" aria-label="Back to top">↑</a>
 </body>
 </html>

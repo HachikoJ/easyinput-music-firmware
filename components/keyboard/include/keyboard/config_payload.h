@@ -67,6 +67,12 @@ struct ParsedKeyboardConfig {
   // Empty + epoch zero is the backward-compatible unprovisioned state.
   std::string speaker_sync_key;
   std::uint16_t speaker_sync_key_epoch = 0U;
+  // Online music credentials are provisioned through the same private device
+  // configuration channel as Wi-Fi. They must never be logged or published in
+  // the status response.
+  bool online_music_enabled = false;
+  std::string online_music_asr_api_key;
+  std::string online_music_asr_workspace_id;
   Keymap keymap = DefaultKeymap();
   EncoderScrollConfig encoder_scroll;
 };

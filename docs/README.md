@@ -12,6 +12,7 @@
 - `hardware/easyinput-v2-safety.md` — 当前板引脚、GPIO8、BOOT 与证据边界
 - `teaching/ai-vibe-coding.md` — 面向学员的 AI 修改回路与首个灯光练习
 - `security/audio-control-v1.md` — 当前音频控制 wire、兼容要求与可信网络边界
+- `online-music.md` — 阿里云 ASR 配置、在线音乐完整操作流程、状态灯、排错、署名与版权边界
 - `release/publication-scope.md` — 首个公开版本的功能范围、内容边界与发布门槛
 - `release/source-inventory.md` — 当前源码、资源、依赖与验证状态
 - `release/functional-parity.md` — 固件功能状态、当前实板测试结果与专项验证边界

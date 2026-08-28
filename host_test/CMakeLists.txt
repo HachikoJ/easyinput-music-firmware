@@ -27,6 +27,7 @@ add_library(easy_input_keyboard_core
   ../components/keyboard/src/audio_control_wire.cpp
   ../components/keyboard/src/awake_wait_planner.cpp
   ../components/keyboard/src/boot_led_sequence.cpp
+  ../components/keyboard/src/boot_wifi_autoconnect.cpp
   ../components/keyboard/src/cold_boot_feedback.cpp
   ../components/keyboard/src/battery_estimator.cpp
   ../components/keyboard/src/ble_advertising_state.cpp
@@ -50,6 +51,8 @@ add_library(easy_input_keyboard_core
   ../components/keyboard/src/input_test.cpp
   ../components/keyboard/src/led_brightness_mode.cpp
   ../components/keyboard/src/music_mode.cpp
+  ../components/keyboard/src/online_music_mode.cpp
+  ../components/keyboard/src/online_music_progress.cpp
   ../components/keyboard/src/keyboard_snapshot_delivery.cpp
   ../components/keyboard/src/keymap.cpp
   ../components/keyboard/src/platform_selection.cpp
@@ -61,6 +64,7 @@ add_library(easy_input_keyboard_core
   ../components/keyboard/src/speaker_service_startup.cpp
   ../components/keyboard/src/status_hid_protocol.cpp
   ../components/keyboard/src/transport_routing.cpp
+  ../components/keyboard/src/wifi_roaming.cpp
 )
 
 target_include_directories(easy_input_keyboard_core
@@ -90,6 +94,7 @@ add_keyboard_host_test(audio_session_tests)
 add_keyboard_host_test(agent_status_tests)
 add_keyboard_host_test(awake_wait_planner_tests)
 add_keyboard_host_test(boot_led_sequence_tests)
+add_keyboard_host_test(boot_wifi_autoconnect_tests)
 add_keyboard_host_test(cold_boot_feedback_tests)
 add_keyboard_host_test(battery_estimator_tests)
 add_keyboard_host_test(ble_advertising_state_tests)
@@ -125,6 +130,65 @@ add_keyboard_host_test(led_brightness_tests)
 add_keyboard_host_test(led_brightness_mode_tests)
 add_keyboard_host_test(input_test_tests)
 add_keyboard_host_test(music_mode_tests)
+add_keyboard_host_test(online_music_mode_tests)
+add_keyboard_host_test(online_music_progress_tests)
+
+add_executable(
+  online_music_asr_tests
+  online_music_asr_tests.cpp
+  ../features/online_music/src/online_music_asr.cpp
+)
+target_include_directories(
+  online_music_asr_tests
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../features/online_music/include
+)
+find_path(EASY_INPUT_CJSON_INCLUDE_DIR cJSON.h
+  PATH_SUFFIXES cjson
+  HINTS
+    "$ENV{IDF_PATH}/components/json/cJSON"
+    "/opt/homebrew/opt/esp-idf/components/json/cJSON"
+    "/usr/local/opt/esp-idf/components/json/cJSON"
+)
+find_file(EASY_INPUT_CJSON_SOURCE cJSON.c
+  HINTS
+    "$ENV{IDF_PATH}/components/json/cJSON"
+    "/opt/homebrew/opt/esp-idf/components/json/cJSON"
+    "/usr/local/opt/esp-idf/components/json/cJSON"
+)
+find_library(EASY_INPUT_CJSON_LIBRARY NAMES cjson libcjson)
+if(NOT EASY_INPUT_CJSON_INCLUDE_DIR)
+  message(FATAL_ERROR
+    "online_music_asr_tests requires cJSON.h. Set IDF_PATH to an ESP-IDF checkout or install cJSON development headers.")
+endif()
+target_include_directories(online_music_asr_tests PRIVATE
+  "${EASY_INPUT_CJSON_INCLUDE_DIR}")
+if(EASY_INPUT_CJSON_SOURCE)
+  target_sources(online_music_asr_tests PRIVATE "${EASY_INPUT_CJSON_SOURCE}")
+  set_source_files_properties("${EASY_INPUT_CJSON_SOURCE}" PROPERTIES LANGUAGE CXX)
+elseif(EASY_INPUT_CJSON_LIBRARY)
+  target_link_libraries(online_music_asr_tests PRIVATE "${EASY_INPUT_CJSON_LIBRARY}")
+else()
+  message(FATAL_ERROR
+    "online_music_asr_tests requires cJSON.c or a cJSON library. Set IDF_PATH or install cJSON development files.")
+endif()
+target_compile_definitions(online_music_asr_tests PRIVATE CJSON_HIDE_SYMBOLS=0)
+enable_keyboard_host_test_assertions(online_music_asr_tests)
+add_test(NAME online_music_asr_tests COMMAND online_music_asr_tests)
+
+add_executable(
+  online_music_helpers_tests
+  online_music_helpers_tests.cpp
+  ../features/online_music/src/song_query.cpp
+  ../features/online_music/src/ws_text_assembler.cpp
+)
+target_include_directories(
+  online_music_helpers_tests
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../features/online_music/include
+)
+enable_keyboard_host_test_assertions(online_music_helpers_tests)
+add_test(NAME online_music_helpers_tests COMMAND online_music_helpers_tests)
 
 add_executable(
   speaker_assets_wifi_policy_tests
@@ -322,3 +386,4 @@ add_keyboard_host_test(speaker_service_startup_tests)
 add_keyboard_host_test(status_hid_protocol_tests)
 add_keyboard_host_test(transport_routing_tests)
 add_keyboard_host_test(usb_hid_endpoint_arbiter_tests)
+add_keyboard_host_test(wifi_roaming_tests)

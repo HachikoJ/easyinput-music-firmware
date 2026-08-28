@@ -1,7 +1,8 @@
 # Music test files / 音乐测试文件
 
 This directory contains the two Ogg Opus files used by the EasyInput V2.0
-offline music hardware demonstration:
+offline music hardware demonstration. They are not required by the default
+online-music build:
 
 - `track0-dao-xiang.opus.ogg` — 《稻香》 / Jay Chou (周杰伦)
 - `track1-flower.opus.ogg` — “Flower” / Johnny Stimson

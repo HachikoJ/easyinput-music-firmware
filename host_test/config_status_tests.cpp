@@ -811,6 +811,32 @@ void status_variants_publish_boolean_host_action_and_ble_budget() {
   assert(probe.size() <= ai_keyboard::kConfigStatusGattSafeLen);
 }
 
+void status_exposes_only_non_sensitive_online_music_asr_diagnostics() {
+  ai_keyboard::ConfigStatusSnapshot snapshot;
+  snapshot.firmware = "0.5.6";
+  snapshot.phase = "status";
+  snapshot.status = "cached";
+  snapshot.saved = true;
+  snapshot.online_music = {
+      true,
+      true,
+      false,
+      "task_start_timeout",
+      401,
+      "InvalidParameter",
+  };
+
+  const auto json =
+      ai_keyboard::build_config_confirmation_status_json(snapshot);
+  assert(json.find(
+             R"("online_music":{"credentials_configured":true,"busy":false,"last_failure":"task_start_timeout","websocket_http_status":401,"server_error_code":"InvalidParameter"})") !=
+         std::string::npos);
+  assert(json.find("api_key") == std::string::npos);
+  assert(json.find("authorization") == std::string::npos);
+  assert(json.find("transcript") == std::string::npos);
+  assert(json.size() <= ai_keyboard::kConfigStatusGattSafeLen);
+}
+
 int main() {
   builds_compact_status_json();
   includes_compact_board_diagnostics_without_audio_status();
@@ -829,5 +855,6 @@ int main() {
   battery_status_carries_compact_boot_speaker_evidence();
   speaker_probe_worst_case_is_versioned_complete_and_gatt_safe();
   status_variants_publish_boolean_host_action_and_ble_budget();
+  status_exposes_only_non_sensitive_online_music_asr_diagnostics();
   return 0;
 }

@@ -6,14 +6,17 @@
 
 EasyInput Maker 是面向 **EasyInput V2.0 / ESP32-S3** 的 WaytoAGI 社区固件。它保留按键、旋钮、灯光、USB/BLE HID、电池、麦克风与声音资源等现有能力，同时提供公开硬件边界、测试入口和 AI/Vibe Coding 教学路径。
 
-## EasyInput Offline Music Firmware
+## EasyInput Online Music Firmware
 
-本仓库同时包含已验证的离线音乐能力：ESP32-S3 从板载 Flash 读取 Ogg Opus，完成本地解码、扬声器播放、旋钮音量/暂停和 D1-D5 多色节奏呼吸灯效。播放时不依赖云端、电脑伴侣或网络串流。
+本仓库当前默认构建包含在线音乐能力：ESP32-S3 通过 Wi-Fi 采集语音，使用用户自行配置的阿里云百炼 WebSocket ASR 提取歌曲关键词，再调用 GD Studio API 搜索并解析播放链接，最后在板上解码 MP3 并从扬声器播放。电脑只负责配置，音频不会在电脑扬声器播放。
 
-This repository includes the tested offline music path: the ESP32-S3 reads
-Ogg Opus from local flash, decodes it on-board, plays through the speaker, and
-drives multi-color beat breathing on D1-D5. Playback needs no cloud service,
-desktop companion, or network stream.
+This repository's default build includes online music: the ESP32-S3 captures
+voice over Wi-Fi, uses the user's Alibaba Cloud Bailian WebSocket ASR
+credentials to extract a song query, resolves a stream through the GD Studio
+API, and decodes MP3 on the board. The computer is only used for provisioning;
+audio is played by the board speaker.
+
+阿里云 API Key 和 Workspace ID 是运行时凭据，必须由使用者自行申请并通过私有配置通道写入设备；不要写进源码、`sdkconfig`、Issue、截图或 Git 历史。仅配置阿里云还不够：还需要 Wi-Fi、GD Studio API、上游音乐源和合法的歌曲使用权。
 
 项目 Pages 展示页 / Project Pages:
 <https://hachikoj.github.io/easyinput-music-firmware/>
@@ -28,17 +31,49 @@ GitHub sanitizes ordinary README `<video>` tags and does not preview large MP4
 files in the repository. Click the poster above to open the project Pages
 inline player instead of a download page.
 
-### 音乐模式 / Music mode
+### 在线音乐模式 / Online music mode
 
 - 短按双击旋钮进入或退出音乐模式。
-- 任意按下 S1-S8 播放第一首，再次按下切换下一首并无限循环。
-- 单击旋钮暂停，再次单击继续播放；左旋降低、右旋提高音量，默认 15%。
-- D1-D5 根据音频 RMS/节拍输出多色动态呼吸灯。
+- 在线模式内任意按下 S1-S8 开始一次语音搜索；录音最长 10 秒，松开按键结束录音并开始识别、搜索和播放。
+- 播放中再次按任意 S1-S8 会重新录音并按新语音查询切歌；没有输入时，歌曲结束后最多等待 30 秒并尝试播放同一查询的下一页结果。
+- 单击旋钮暂停/继续（需等待双击窗口确认）；播放中左旋降低、右旋提高音量，默认 15%，每格 5%。
+- D1-D5 依次表示录音、识别、搜索、解析链接、起播；播放时切换为由 RMS/节拍驱动的多色动态呼吸。
+- 再次以 251–500 ms 间隔短按双击旋钮退出；快速双击（小于 251 ms）保留给离线音乐手势。
 
-- Short double-click the encoder to enter or leave music mode.
-- Press any S1-S8 to start the first track; press again to advance and wrap.
-- Single-click to pause/resume; rotate left/right for volume, starting at 15%.
-- D1-D5 render multi-color RMS/beat breathing during playback.
+- In online mode, press any S1-S8 to start a voice search; recording is capped at 10 seconds.
+- Press any S1-S8 again while playing to record a new query; after a track ends, the firmware may try the next search result for up to 30 seconds.
+- Single-click the encoder to pause/resume after the double-click window; rotate left/right for volume, starting at 15% in 5% steps.
+- D1-D5 show recording, recognition, search, URL resolution, and startup progress, then multi-color RMS/beat breathing during playback.
+- Double-click with a 251–500 ms inter-click interval to exit; faster double-clicks remain reserved for the offline music gesture.
+
+### 三分钟配置与烧录 / Configure, flash, and play
+
+1. 创建阿里云百炼项目并开通实时语音识别，取得 `API Key` 和 `Workspace ID`。本固件默认使用北京地域的 `qwen-audio-3.0-asr-flash-streaming`。
+2. 克隆仓库，安装 ESP-IDF **5.5.5**，连接 EasyInput V2.0 / ESP32-S3，并按 [开始使用](docs/getting-started/README.md) 构建和烧录。
+3. 通过兼容的 USB/BLE 配置工具或受信任的 Wi-Fi 配置端点写入下面的 JSON。仓库不包含桌面 companion；配置工具必须实现现有 `S3C` 分块协议并在设备的配置窗口内发送。
+
+```json
+{
+  "schema": "ai_keyboard.v1",
+  "wifi_ssid": "YOUR_WIFI_SSID",
+  "wifi_password": "YOUR_WIFI_PASSWORD",
+  "online_music_enabled": true,
+  "online_music_asr_api_key": "YOUR_ALIYUN_API_KEY",
+  "online_music_asr_workspace_id": "YOUR_WORKSPACE_ID"
+}
+```
+
+4. 重启设备，短按双击旋钮进入在线音乐模式；S1-S8、旋钮和 D1-D5 的完整时序见 [在线音乐手册](docs/online-music.md)。
+
+占位符不能直接使用。凭据保存于设备 NVS，状态回执只报告是否已配置和错误类别，不回传密钥。每月费用、阿里云配额和网络流量由使用者自行承担。
+
+### 在线音乐的服务边界 / Service boundary
+
+- 阿里云百炼：仅负责语音识别和歌曲关键词提取。
+- GD Studio API：负责搜索歌曲和获取播放链接，端点为 <https://music-api.gdstudio.xyz/api.php>，上游要求署名 `GD音乐台(music.gdstudio.xyz)`，按其页面说明仅限学习参考、禁止商业使用。
+- 实际音频来自上游音乐源；链接有效期、地区限制、可用性和版权由上游及使用者负责。本项目不自建曲库、不保证任何歌曲可播放。
+
+如需完全离线的板载 Ogg Opus 播放器，仍可显式启用 `EASY_INPUT_MUSIC_PLAYER=ON`；它与默认在线路径是不同构建，且音乐文件必须是源码树外、由使用者拥有再发布权的输入，详见 [离线音乐构建](docs/music-mode.md)。
 
 ### 公开媒体与版权 / Public media and copyright
 
@@ -86,7 +121,7 @@ idf.py -B build-music \
 ## 先看当前证据
 
 - **公开源码与依赖｜完整功能基线**：锁定依赖和 WaytoAGI 出厂提示音均已纳入；这不是另做的一套精简教学固件。
-- **宿主测试｜62 / 62 通过**：纯逻辑、协议、配置、输入、状态与资源合同通过当前测试。
+- **宿主测试｜66 / 66 通过**：纯逻辑、协议、配置、输入、状态与资源合同通过当前测试。
 - **ESP-IDF 构建｜5.5.5 / ESP32-S3 默认构建通过**：当前源码和锁定依赖可以生成固件镜像。
 - **EasyInput V2.0 实板联合测试｜通过**：当前公开候选已完成主功能实板测试并观察正常。
 

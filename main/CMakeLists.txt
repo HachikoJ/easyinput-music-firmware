@@ -3,7 +3,9 @@ set(easy_input_main_sources
   "platform/battery_adc.cpp"
   "platform/ble_hid.cpp"
   "platform/gpio_keys.cpp"
-  "platform/keyboard_audio.cpp"
+    "platform/keyboard_audio.cpp"
+    "platform/config_provision.cpp"
+  "platform/online_music_asr.cpp"
   "platform/led_strip_status.cpp"
   "platform/nvs_store.cpp"
   "platform/peripheral_power.cpp"
@@ -24,9 +26,13 @@ set(easy_input_main_requires
   esp_psram
   esp_timer
   esp_wifi
+  tcp_transport
+  json
+  esp-tls
   espressif__esp_tinyusb
   lwip
   nvs_flash
+  spi_flash
 )
 
 idf_build_get_property(
@@ -37,10 +43,17 @@ idf_build_get_property(
   easy_input_music_player_enabled
   EASY_INPUT_MUSIC_PLAYER_ENABLED
 )
+idf_build_get_property(
+  easy_input_online_music_enabled
+  EASY_INPUT_ONLINE_MUSIC_ENABLED
+)
 
 if(easy_input_music_player_enabled)
   list(APPEND easy_input_main_sources "platform/music_player.cpp")
   list(APPEND easy_input_main_requires music_player)
+endif()
+if(easy_input_online_music_enabled)
+  list(APPEND easy_input_main_requires online_music)
 endif()
 
 if(EASY_INPUT_SPEAKER_DIAGNOSTIC OR
@@ -98,6 +111,12 @@ if(easy_input_music_player_enabled)
   target_compile_definitions(
     ${COMPONENT_LIB}
     PRIVATE EASY_INPUT_MUSIC_PLAYER=1
+  )
+endif()
+if(easy_input_online_music_enabled)
+  target_compile_definitions(
+    ${COMPONENT_LIB}
+    PRIVATE EASY_INPUT_ONLINE_MUSIC=1
   )
 endif()
 

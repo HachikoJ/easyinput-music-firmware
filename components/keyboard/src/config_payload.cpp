@@ -781,6 +781,37 @@ ConfigParseResult parse_config_payload(const std::string& json_storage) {
     result.config.audio_port = kDefaultAudioPort;
   }
 
+  if (const auto online_enabled_value =
+          field_value(json, "online_music_enabled");
+      online_enabled_value.has_value()) {
+    const auto value = bool_value(*online_enabled_value);
+    if (!value.has_value()) {
+      result.status = ConfigParseStatus::InvalidJson;
+      return result;
+    }
+    result.config.online_music_enabled = *value;
+  }
+  if (const auto online_key_value =
+          field_value(json, "online_music_asr_api_key");
+      online_key_value.has_value()) {
+    const auto value = string_value(*online_key_value);
+    if (!value.has_value() || value->size() > 192U) {
+      result.status = ConfigParseStatus::InvalidJson;
+      return result;
+    }
+    result.config.online_music_asr_api_key = *value;
+  }
+  if (const auto online_workspace_value =
+          field_value(json, "online_music_asr_workspace_id");
+      online_workspace_value.has_value()) {
+    const auto value = string_value(*online_workspace_value);
+    if (!value.has_value() || value->empty() || value->size() > 96U) {
+      result.status = ConfigParseStatus::InvalidJson;
+      return result;
+    }
+    result.config.online_music_asr_workspace_id = *value;
+  }
+
   const auto speaker_sync_key_value =
       field_value(json, "speaker_sync_key");
   const auto speaker_sync_epoch_value =

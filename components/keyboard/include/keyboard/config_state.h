@@ -28,6 +28,9 @@ class ConfigState {
   int audio_port() const;
   const std::string& speaker_sync_key() const;
   std::uint16_t speaker_sync_key_epoch() const;
+  bool online_music_enabled() const;
+  const std::string& online_music_asr_api_key() const;
+  const std::string& online_music_asr_workspace_id() const;
   void set_target_platform(HostPlatform platform);
   const std::string& last_applied_json() const;
 

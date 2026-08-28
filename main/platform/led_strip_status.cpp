@@ -256,6 +256,7 @@ void StatusLedStrip::clear() {
   agent_status_active_ = false;
   agent_status_rendered_ = false;
   agent_status_expires_ms_ = 0;
+  online_music_progress_.reset();
   set_all({});
   esp_err_t err = ESP_OK;
   if (ready()) {
@@ -389,11 +390,20 @@ void StatusLedStrip::show_status_event(StatusLedEvent event, std::uint32_t now_m
                             100});
       return;
     case StatusLedEvent::SaveFailed:
+    case StatusLedEvent::OnlineMusicRecognitionFailed:
       show_status_feedback({true,
                             ai_keyboard::FeedbackEffectKind::ConfirmPulse,
                             ai_keyboard::FeedbackDirection::None,
                             {32, 0, 0},
                             1000,
+                            120});
+      return;
+    case StatusLedEvent::OnlineMusicPlaybackFailed:
+      show_status_feedback({true,
+                            ai_keyboard::FeedbackEffectKind::DirectionalFlow,
+                            ai_keyboard::FeedbackDirection::Right,
+                            {32, 0, 0},
+                            1500,
                             120});
       return;
   }
@@ -441,6 +451,19 @@ void StatusLedStrip::set_music_audio_level(std::uint16_t rms_milli,
   }
   music_rms_milli_ = std::min<std::uint16_t>(rms_milli, 1000U);
   music_beat_milli_ = std::min<std::uint16_t>(beat_milli, 1000U);
+}
+
+void StatusLedStrip::set_online_music_progress(
+    const ai_keyboard::OnlineMusicProgress& progress,
+    std::uint32_t now_ms) {
+  online_music_progress_ = progress;
+  idle_rendered_ = false;
+  if (!brightness_preview_active_ && !cold_boot_sequence_.active() &&
+      !music_visual_active_) {
+    render_online_music_progress(now_ms);
+    flush();
+    idle_rendered_ = true;
+  }
 }
 
 void StatusLedStrip::show_feedback(const ai_keyboard::InputActivityFeedback& feedback,
@@ -611,6 +634,17 @@ void StatusLedStrip::update(std::uint32_t now_ms) {
     return;
   }
 
+  if (online_music_progress_.active()) {
+    online_music_progress_.update(now_ms);
+    if (now_ms - last_frame_ms_ >= 80U || !idle_rendered_) {
+      last_frame_ms_ = now_ms;
+      render_online_music_progress(now_ms);
+      flush();
+      idle_rendered_ = true;
+    }
+    return;
+  }
+
   if (update_active_feedback(now_ms)) {
     return;
   }
@@ -651,6 +685,7 @@ bool StatusLedStrip::next_update_deadline_ms(
   }
   add(music_visual_active_ && !music_visual_paused_,
       music_last_frame_ms_ + 30U);
+  add(online_music_progress_.active(), last_frame_ms_ + 80U);
   add(agent_status_active_, agent_status_expires_ms_);
   if (!idle_rendered_ && !active_feedback_.active &&
       !cold_boot_sequence_.active()) {
@@ -694,6 +729,42 @@ void StatusLedStrip::render_agent_status() {
       leds_[index] = scale_rgb(color, 1, 2);
     } else {
       leds_[index] = scale_rgb(color, 1, 4);
+    }
+  }
+}
+
+void StatusLedStrip::render_online_music_progress(std::uint32_t now_ms) {
+  constexpr Rgb kGreen{0, 34, 4};
+  constexpr Rgb kBlue{0, 5, 38};
+  constexpr Rgb kRed{38, 0, 0};
+  constexpr Rgb kOrange{34, 10, 0};
+  constexpr std::array<std::size_t, ai_keyboard::OnlineMusicProgress::kStageCount>
+      kStageToPixel{{4U, 3U, 2U, 1U, 0U}};  // D5, D4, D3, D2, D1.
+  const auto pulse = static_cast<std::uint8_t>(
+      3U + ((now_ms / 80U) % 8U <= 4U ? (now_ms / 80U) % 5U
+                                             : 8U - (now_ms / 80U) % 8U));
+  set_all({});
+  const auto& stages = online_music_progress_.stages();
+  for (std::size_t stage = 0U; stage < stages.size(); ++stage) {
+    const auto pixel = kStageToPixel[stage];
+    switch (stages[stage]) {
+      case ai_keyboard::OnlineMusicStageState::Preparing:
+        leds_[pixel] = kOrange;
+        break;
+      case ai_keyboard::OnlineMusicStageState::Complete:
+        leds_[pixel] = kGreen;
+        break;
+      case ai_keyboard::OnlineMusicStageState::Active:
+        leds_[pixel] = scale_rgb(kBlue, pulse, 8U);
+        break;
+      case ai_keyboard::OnlineMusicStageState::Failed:
+        leds_[pixel] = ((now_ms / 160U) % 2U) == 0U ? kRed : Rgb{};
+        break;
+      case ai_keyboard::OnlineMusicStageState::RetryWaiting:
+        leds_[pixel] = kOrange;
+        break;
+      case ai_keyboard::OnlineMusicStageState::Pending:
+        break;
     }
   }
 }

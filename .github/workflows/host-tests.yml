@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install cJSON development files
+        run: sudo apt-get update && sudo apt-get install --yes libcjson-dev
       - name: Configure
         run: cmake -S host_test -B build-host -DCMAKE_BUILD_TYPE=Debug
       - name: Build

@@ -17,13 +17,17 @@
 #include "freertos/task.h"
 #include "keyboard/audio_io_arbiter.h"
 #include "keyboard/audio_session.h"
+#include "keyboard/boot_wifi_autoconnect.h"
+#include "keyboard/wifi_profile.h"
 
 namespace easy_input {
 
 struct KeyboardAudioConfig {
   bool enabled = false;
+  bool online_music_enabled = false;
   std::string wifi_ssid;
   std::string wifi_password;
+  ai_keyboard::WifiProfileList wifi_profiles{};
   std::string host;
   std::uint16_t port = 17333;
   std::array<std::uint8_t, 32> speaker_sync_key{};
@@ -88,7 +92,16 @@ class KeyboardAudioLink {
   // state changes. Requests coalesce by generation and remain pending until
   // the control task successfully sends a heartbeat.
   void request_heartbeat_refresh();
+  // Start the one-shot boot reconnect window after persisted configuration
+  // has been loaded. Only saved protected-network credentials are eligible.
+  void start_boot_wifi_autoconnect();
   void set_audio_io_arbiter(ai_keyboard::AudioIoArbiter* arbiter);
+  bool ensure_internet_ready();
+  bool start_microphone_capture(std::uint32_t generation);
+  esp_err_t read_microphone_frame(std::uint8_t* frame,
+                                  std::size_t frame_size,
+                                  std::size_t* bytes_read);
+  void stop_microphone_capture(std::uint32_t generation);
   void configure(const KeyboardAudioConfig& config);
   void stop_all_streams();
   void start_stream(const char* reason, std::uint64_t session_id);
@@ -110,6 +123,8 @@ class KeyboardAudioLink {
   // Whole-device Deep Sleep gate: connected Wi-Fi or an active data-plane
   // lease must first be coordinated to an idle released state.
   bool wifi_active_or_streaming() const;
+  bool acquire_online_music_downlink();
+  void release_online_music_downlink();
   // Terminal owner-task operation. Call only after the release transaction is
   // complete and every audio/management admission gate is closed.
   bool shutdown_wifi_for_deep_sleep();
@@ -143,6 +158,8 @@ class KeyboardAudioLink {
                                     bool wait_for_connection,
                                     bool abort_on_stream_stop,
                                     std::uint32_t stream_generation = 0);
+  esp_err_t connect_best_saved_wifi(const KeyboardAudioConfig& config,
+                                    const char* reason);
   esp_err_t prepare_microphone_channel();
   esp_err_t prepare_microphone_channel_locked();
   esp_err_t ensure_microphone_ready();
@@ -178,6 +195,7 @@ class KeyboardAudioLink {
   void notify_work_ready();
   void note_remote_work_ready();
   bool stop_wifi_for_inactive_audio();
+  bool stop_wifi_after_boot_autoconnect_timeout();
   bool begin_wifi_release_for_deep_sleep();
   KeyboardAudioConfig config_snapshot() const;
   void lock() const;
@@ -201,6 +219,10 @@ class KeyboardAudioLink {
   bool mic_enabled_ = false;
   std::string wifi_configured_ssid_;
   std::string wifi_configured_password_;
+  ai_keyboard::BootWifiAutoconnectState boot_wifi_autoconnect_state_ =
+      ai_keyboard::BootWifiAutoconnectState::Pending;
+  TickType_t boot_wifi_autoconnect_started_tick_ = 0;
+  TickType_t boot_wifi_last_attempt_tick_ = 0;
   // The audio sender/capture workers and their queue are created once during
   // begin(). The queue payload storage is an explicit PSRAM bulk allocation;
   // its FreeRTOS control block and all task stacks remain in internal SRAM.
@@ -236,6 +258,7 @@ class KeyboardAudioLink {
   std::uint32_t wifi_service_host_ipv4_ = 0U;
   bool wifi_service_host_ipv4_valid_ = false;
   KeyboardWifiServiceLease wifi_service_lease_{};
+  bool online_music_downlink_active_ = false;
   std::uint32_t next_wifi_service_lease_id_ = 1U;
   // acquire_wifi_service_lease() may synchronously force WIFI_PS_NONE from
   // the speaker carrier task. The control task observes this generation and

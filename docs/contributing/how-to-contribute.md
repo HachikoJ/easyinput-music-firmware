@@ -18,8 +18,8 @@
 下载官方仓库：
 
 ```bash
-git clone https://github.com/CY-CHENYUE/easy-input-maker.git
-cd easy-input-maker
+git clone https://github.com/HachikoJ/easyinput-music-firmware.git
+cd easyinput-music-firmware
 ```
 
 只使用原固件时，按照 [开始使用](../getting-started/README.md) 完成构建，并在确认目标开发板后按照 [烧录与恢复](../getting-started/flash-and-recovery.md) 操作。
@@ -36,8 +36,8 @@ git switch -c practice/led-brightness
 
 ## 有想法或发现问题：提交 Issue
 
-1. 打开仓库的 [Issues](https://github.com/CY-CHENYUE/easy-input-maker/issues)，先搜索是否已有相同建议或问题。
-2. 选择 [New issue](https://github.com/CY-CHENYUE/easy-input-maker/issues/new/choose)。
+1. 打开仓库的 [Issues](https://github.com/HachikoJ/easyinput-music-firmware/issues)，先搜索是否已有相同建议或问题。
+2. 选择 [New issue](https://github.com/HachikoJ/easyinput-music-firmware/issues/new/choose)。
 3. 新功能选择 **Feature request**，至少说明：
    - 学员或 Maker 想完成什么；
    - 一个具体使用场景；
@@ -59,8 +59,8 @@ git switch -c practice/led-brightness
 在 GitHub 仓库页面点击 **Fork**，把仓库复制到自己的 GitHub 账号，然后下载自己的 Fork：
 
 ```bash
-git clone https://github.com/<你的 GitHub 用户名>/easy-input-maker.git
-cd easy-input-maker
+git clone https://github.com/<你的 GitHub 用户名>/easyinput-music-firmware.git
+cd easyinput-music-firmware
 ```
 
 `<你的 GitHub 用户名>` 需要替换成自己的账号名称，不要原样复制。
@@ -146,7 +146,7 @@ git push -u origin feat/led-brightness
 
 推送后，在自己的 Fork 页面点击 **Compare & pull request**：
 
-- 目标仓库选择 `CY-CHENYUE/easy-input-maker`；
+- 目标仓库选择 `HachikoJ/easyinput-music-firmware`；
 - 目标分支选择 `main`；
 - 来源选择自己的 Fork 和本次功能分支；
 - 按 PR 模板说明修改内容、用户可见效果、硬件与协议影响、运行过的命令、测试结果、实板观察、AI 协助范围和第三方材料来源。
@@ -164,7 +164,7 @@ PR 只有在维护者审核通过后才会合并到 `main`。代码能够编译�
 如果最初运行的是：
 
 ```bash
-git clone https://github.com/CY-CHENYUE/easy-input-maker.git
+git clone https://github.com/HachikoJ/easyinput-music-firmware.git
 ```
 
 此时本地的 `origin` 指向官方仓库，普通学员通常不能直接向官方 `main` 推送。但现有修改不需要丢弃或重做，可以按下面步骤转到自己的 Fork。
@@ -201,7 +201,7 @@ git remote add origin https://github.com/<你的 GitHub 用户名>/easy-input-ma
 git remote -v
 ```
 
-确认 `origin` 指向自己的账号、`upstream` 指向 `CY-CHENYUE/easy-input-maker`。不要把 `<你的 GitHub 用户名>` 原样复制进命令。
+确认 `origin` 指向自己的账号、`upstream` 指向 `HachikoJ/easyinput-music-firmware`。不要把 `<你的 GitHub 用户名>` 原样复制进命令。
 
 ### 4. 检查、提交并推送
 
@@ -211,7 +211,7 @@ git remote -v
 git push -u origin HEAD
 ```
 
-这里的 `HEAD` 表示当前分支，可以避免把示例分支名误当成自己的真实分支。最后从个人 Fork 的功能分支向 `CY-CHENYUE/easy-input-maker` 的 `main` 创建 Pull Request。这个过程不需要 force push，也不需要删除、重置或重新下载当前修改。
+这里的 `HEAD` 表示当前分支，可以避免把示例分支名误当成自己的真实分支。最后从个人 Fork 的功能分支向 `HachikoJ/easyinput-music-firmware` 的 `main` 创建 Pull Request。这个过程不需要 force push，也不需要删除、重置或重新下载当前修改。
 
 如果最初下载的是 GitHub ZIP 而不是 `git clone`，该目录没有 Git 历史。先 Fork 并把自己的 Fork Clone 到一个新目录，只复制确实修改过的源码、测试和文档文件；不要复制构建目录、`sdkconfig`、凭据或日志。检查 `git diff` 后，再按照正常 PR 流程提交。
 

@@ -33,6 +33,8 @@
 #include "keyboard/keyboard_snapshot_delivery.h"
 #include "keyboard/keymap.h"
 #include "keyboard/music_mode.h"
+#include "keyboard/online_music_mode.h"
+#include "keyboard/online_music_progress.h"
 #include "keyboard/led_brightness_mode.h"
 #include "keyboard/power_cycle.h"
 #include "keyboard/power_policy.h"
@@ -40,11 +42,18 @@
 #include "keyboard/transport_routing.h"
 #include "platform/battery_adc.h"
 #include "platform/ble_hid.h"
+#include "platform/config_provision.h"
 #include "platform/gpio_keys.h"
 #include "platform/keyboard_audio.h"
 #include "platform/led_strip_status.h"
 #if defined(EASY_INPUT_MUSIC_PLAYER)
 #include "platform/music_player.h"
+#endif
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+#include "online_music/music_catalog.h"
+#include "online_music/online_music_stream.h"
+#include "online_music/song_query.h"
+#include "platform/online_music_asr.h"
 #endif
 #include "platform/nvs_store.h"
 #include "platform/peripheral_power.h"
@@ -67,9 +76,15 @@ namespace {
 
 constexpr const char* kTag = "easy_input";
 constexpr const char* kFirmwareName = "EasyInput AI";
-#if defined(EASY_INPUT_MUSIC_PLAYER)
+#if defined(EASY_INPUT_MUSIC_PLAYER) && defined(EASY_INPUT_ONLINE_MUSIC)
+constexpr const char* kFirmwareVersion =
+    "0.5.21-idf-v2-online-autoplay";
+#elif defined(EASY_INPUT_MUSIC_PLAYER)
 constexpr const char* kFirmwareVersion =
     "0.4.54-idf-v2-music-volume-color";
+#elif defined(EASY_INPUT_ONLINE_MUSIC)
+constexpr const char* kFirmwareVersion =
+    "0.5.0-idf-v2-online-mp3";
 #elif defined(EASY_INPUT_SPEAKER_IMA_ADPCM_DIAGNOSTIC)
 constexpr const char* kFirmwareVersion =
     "0.4.40-idf-v2-spk-ima-probe";
@@ -169,6 +184,7 @@ struct AppContext {
   easy_input::StatusLedStrip leds;
   ai_keyboard::ColdBootFeedbackCoordinator cold_boot_feedback;
   easy_input::NvsConfigStore config_store;
+  ai_keyboard::WifiProfileList wifi_profiles{};
   easy_input::BatteryAdc battery;
   ai_keyboard::BatteryEstimator battery_estimator;
   easy_input::BleHidTransport ble;
@@ -227,10 +243,25 @@ struct AppContext {
   bool audio_power_hold_active = false;
   ai_keyboard::EncoderPressGesture encoder_press_gesture;
   ai_keyboard::MusicModeController music_mode;
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  ai_keyboard::OnlineMusicModeController online_music_mode;
+  ai_keyboard::OnlineMusicProgress online_music_progress;
+  easy_input::online_music::MusicCatalog online_music_catalog;
+  easy_input::online_music::OnlineMusicStream online_music_stream;
+  easy_input::OnlineMusicAsr online_music_asr;
+  bool online_music_stream_ready = false;
+  bool online_music_asr_ready = false;
+  bool online_music_power_hold_active = false;
+  bool online_music_wifi_hold_active = false;
+  bool online_music_visual_pending = false;
+  std::string online_music_query;
+  std::string online_music_song_id;
+  std::uint32_t online_music_search_page = 0U;
+  easy_input::NvsConfigStore::OnlineMusicCredentials online_music_credentials;
+#endif
 #if defined(EASY_INPUT_MUSIC_PLAYER)
   easy_input::MusicPlayer music_player;
   bool music_player_ready = false;
-  bool music_power_hold_active = false;
 #endif
   ai_keyboard::LedBrightnessMode led_brightness_mode;
   std::uint8_t led_brightness_percent =
@@ -276,6 +307,299 @@ struct AppContext {
 };
 
 bool handle_input_event(const easy_input::InputEvent& event, void* context);
+std::uint32_t millis();
+
+void apply_online_music_result(
+    AppContext* app,
+    const ai_keyboard::OnlineMusicResult& result,
+    std::uint32_t now_ms) {
+#if !defined(EASY_INPUT_ONLINE_MUSIC)
+  static_cast<void>(app);
+  static_cast<void>(result);
+  static_cast<void>(now_ms);
+  return;
+#else
+  if (app == nullptr || result.action == ai_keyboard::OnlineMusicAction::None) {
+    return;
+  }
+  const auto show_status = [app, now_ms](ai_keyboard::AgentStatusState state,
+                                         std::uint32_t ttl_ms) {
+    app->leds.set_agent_status({state, 0U, now_ms, ttl_ms, 0U}, now_ms);
+  };
+  switch (result.action) {
+    case ai_keyboard::OnlineMusicAction::EnterMode:
+      if (!app->online_music_stream_ready || !app->online_music_asr_ready) {
+        app->online_music_mode.reset();
+        show_status(ai_keyboard::AgentStatusState::kFailed, 1200U);
+        ESP_LOGW(kTag, "online music unavailable: runtime workers not ready");
+        return;
+      }
+      if (app->online_music_credentials.api_key.empty() ||
+          app->online_music_credentials.workspace_id.empty()) {
+        app->online_music_mode.reset();
+        show_status(ai_keyboard::AgentStatusState::kFailed, 1200U);
+        ESP_LOGW(kTag, "online music unavailable: credentials configured=0");
+        return;
+      }
+      app->encoder_press_gesture.reset();
+      app->led_brightness_mode.reset();
+      app->leds.end_brightness_preview();
+      app->online_music_stream.set_volume_percent(result.volume_percent);
+      app->online_music_progress.reset();
+      app->online_music_visual_pending = false;
+      app->online_music_query.clear();
+      app->online_music_song_id.clear();
+      app->online_music_search_page = 0U;
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      show_status(ai_keyboard::AgentStatusState::kWaitingUser, 60000U);
+      ESP_LOGI(kTag, "online music mode entered");
+      return;
+    case ai_keyboard::OnlineMusicAction::ExitMode:
+    case ai_keyboard::OnlineMusicAction::SessionExpired:
+      app->online_music_stream.stop();
+      app->online_music_asr.stop();
+      app->audio.release_online_music_downlink();
+      app->online_music_wifi_hold_active = false;
+      app->online_music_progress.reset();
+      app->online_music_visual_pending = false;
+      app->online_music_query.clear();
+      app->online_music_song_id.clear();
+      app->online_music_search_page = 0U;
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      app->leds.set_music_visual(false, false, now_ms);
+      show_status(ai_keyboard::AgentStatusState::kIdle, 0U);
+      ESP_LOGI(kTag, "online music mode exited");
+      return;
+    case ai_keyboard::OnlineMusicAction::StartListening:
+      app->online_music_stream.stop();
+      if (app->online_music_wifi_hold_active) {
+        app->audio.release_online_music_downlink();
+        app->online_music_wifi_hold_active = false;
+      }
+      show_status(ai_keyboard::AgentStatusState::kWaitingUser, 11000U);
+      app->online_music_progress.prepare(
+          ai_keyboard::OnlineMusicStage::Recording);
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      if (!app->online_music_asr.start()) {
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::Recording, now_ms);
+        app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+        apply_online_music_result(
+            app,
+            app->online_music_mode.handle({
+                ai_keyboard::OnlineMusicEvent::Kind::RecognitionFailed,
+                0,
+                now_ms,
+                {}}),
+            now_ms);
+      }
+      return;
+    case ai_keyboard::OnlineMusicAction::ListeningReady:
+      app->online_music_progress.start(
+          ai_keyboard::OnlineMusicStage::Recording);
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::StartResolving:
+      app->online_music_asr.finish_input();
+      show_status(ai_keyboard::AgentStatusState::kRunning, 30000U);
+      app->online_music_progress.complete(
+          ai_keyboard::OnlineMusicStage::Recording, now_ms);
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::StartPlayback: {
+      app->online_music_progress.complete(
+          ai_keyboard::OnlineMusicStage::Recognizing, now_ms);
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      std::string song_id;
+      std::string stream_url;
+      const auto query = easy_input::online_music::extract_song_search_query(
+          result.recognized_text);
+      if (!app->online_music_catalog.search(query, &song_id)) {
+        const auto failed_now = millis();
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::Searching, failed_now);
+        app->leds.set_online_music_progress(app->online_music_progress,
+                                            failed_now);
+        ESP_LOGW(kTag, "online music failed stage=catalog_search");
+        apply_online_music_result(
+            app,
+            app->online_music_mode.handle({
+                ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed,
+                0,
+                failed_now,
+                {}}),
+            failed_now);
+        return;
+      }
+      const auto search_now = millis();
+      app->online_music_progress.complete(
+          ai_keyboard::OnlineMusicStage::Searching, search_now);
+      app->leds.set_online_music_progress(app->online_music_progress,
+                                          search_now);
+      if (!app->online_music_catalog.resolve_url(song_id, &stream_url)) {
+        const auto failed_now = millis();
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::ResolvingUrl, failed_now);
+        app->leds.set_online_music_progress(app->online_music_progress,
+                                            failed_now);
+        ESP_LOGW(kTag, "online music failed stage=catalog_url");
+        apply_online_music_result(
+            app,
+            app->online_music_mode.handle({
+                ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed,
+                0,
+                failed_now,
+                {}}),
+            failed_now);
+        return;
+      }
+      const auto url_now = millis();
+      app->online_music_progress.complete(
+          ai_keyboard::OnlineMusicStage::ResolvingUrl, url_now);
+      app->leds.set_online_music_progress(app->online_music_progress, url_now);
+      app->online_music_query = query;
+      app->online_music_song_id = song_id;
+      app->online_music_search_page = 1U;
+      if (!app->audio.acquire_online_music_downlink()) {
+        const auto failed_now = millis();
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::StartingPlayback, failed_now);
+        app->leds.set_online_music_progress(app->online_music_progress,
+                                            failed_now);
+        ESP_LOGW(kTag, "online music failed stage=wifi_downlink");
+        apply_online_music_result(
+            app,
+            app->online_music_mode.handle({
+                ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed,
+                0,
+                failed_now,
+                {}}),
+            failed_now);
+        return;
+      }
+      app->online_music_wifi_hold_active = true;
+      if (!app->online_music_stream.play(stream_url)) {
+        app->audio.release_online_music_downlink();
+        app->online_music_wifi_hold_active = false;
+        const auto failed_now = millis();
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::StartingPlayback, failed_now);
+        app->leds.set_online_music_progress(app->online_music_progress,
+                                            failed_now);
+        ESP_LOGW(kTag, "online music failed stage=stream_worker");
+        apply_online_music_result(
+            app,
+            app->online_music_mode.handle({
+                ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed,
+                0,
+                failed_now,
+                {}}),
+            failed_now);
+      }
+      return;
+    }
+    case ai_keyboard::OnlineMusicAction::PlaybackCompleted:
+      app->online_music_visual_pending = false;
+      app->online_music_progress.reset();
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      app->leds.set_music_visual(false, false, now_ms);
+      show_status(ai_keyboard::AgentStatusState::kWaitingUser, 30000U);
+      return;
+    case ai_keyboard::OnlineMusicAction::AutoPlayNext: {
+      app->online_music_progress.start(ai_keyboard::OnlineMusicStage::Searching);
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      std::string song_id;
+      std::string stream_url;
+      std::uint32_t selected_page = 0U;
+      for (std::uint32_t attempt = 1U; attempt <= 3U; ++attempt) {
+        const auto page = app->online_music_search_page + attempt;
+        if (app->online_music_catalog.search(app->online_music_query, page,
+                                             &song_id) &&
+            song_id != app->online_music_song_id &&
+            app->online_music_catalog.resolve_url(song_id, &stream_url)) {
+          selected_page = page;
+          break;
+        }
+      }
+      if (selected_page != 0U &&
+          app->audio.acquire_online_music_downlink()) {
+        app->online_music_wifi_hold_active = true;
+        if (app->online_music_stream.play(stream_url)) {
+          app->online_music_song_id = song_id;
+          app->online_music_search_page = selected_page;
+          const auto resolved_now = millis();
+          app->online_music_progress.complete(
+              ai_keyboard::OnlineMusicStage::Searching, resolved_now);
+          app->online_music_progress.complete(
+              ai_keyboard::OnlineMusicStage::ResolvingUrl, resolved_now);
+          app->leds.set_online_music_progress(app->online_music_progress,
+                                              resolved_now);
+          return;
+        }
+        app->audio.release_online_music_downlink();
+        app->online_music_wifi_hold_active = false;
+      }
+      const auto failed_now = millis();
+      app->online_music_progress.fail(
+          ai_keyboard::OnlineMusicStage::Searching, failed_now);
+      app->leds.set_online_music_progress(app->online_music_progress,
+                                          failed_now);
+      ESP_LOGW(kTag, "online music failed stage=autoplay_search");
+      apply_online_music_result(
+          app,
+          app->online_music_mode.handle({
+              ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed,
+              0,
+              failed_now,
+              {}}),
+          failed_now);
+      return;
+    }
+    case ai_keyboard::OnlineMusicAction::TogglePause:
+      app->online_music_stream.set_paused(result.paused);
+      app->leds.set_music_visual(true, result.paused, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::VolumeChanged:
+      app->online_music_stream.set_volume_percent(result.volume_percent);
+      return;
+    case ai_keyboard::OnlineMusicAction::PlaybackReady:
+      app->online_music_progress.complete(
+          ai_keyboard::OnlineMusicStage::StartingPlayback, now_ms);
+      app->online_music_visual_pending = true;
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::PlaybackFailed:
+      app->online_music_visual_pending = false;
+      app->leds.set_music_visual(false, false, now_ms);
+      show_status(ai_keyboard::AgentStatusState::kWaitingUser, 30000U);
+      if (!app->online_music_progress.has_failure()) {
+        if (!app->online_music_progress.active()) {
+          app->online_music_progress.start(
+              ai_keyboard::OnlineMusicStage::StartingPlayback);
+        }
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::StartingPlayback, now_ms);
+        app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      }
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::FailureBeep3:
+      app->online_music_visual_pending = false;
+      show_status(ai_keyboard::AgentStatusState::kWaitingUser, 30000U);
+      if (!app->online_music_progress.has_failure()) {
+        app->online_music_progress.fail(
+            ai_keyboard::OnlineMusicStage::Recognizing, now_ms);
+        app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      }
+      app->leds.set_online_music_progress(app->online_music_progress, now_ms);
+      return;
+    case ai_keyboard::OnlineMusicAction::StopListening:
+    case ai_keyboard::OnlineMusicAction::RetryListening:
+    case ai_keyboard::OnlineMusicAction::None:
+      return;
+  }
+#endif
+}
 
 void apply_music_mode_result(AppContext* app,
                              const ai_keyboard::MusicModeResult& result,
@@ -974,8 +1298,22 @@ std::string publish_config_status(AppContext* app,
       true,
       true,
       true,
+      nullptr,
+      {},
   };
   snapshot.speaker = speaker_probe;
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  const auto online_music_asr = app->online_music_asr.diagnostics();
+  snapshot.online_music = {
+      true,
+      online_music_asr.credentials_configured,
+      online_music_asr.busy,
+      easy_input::online_music_asr_failure_name(
+          online_music_asr.last_failure),
+      online_music_asr.websocket_http_status,
+      online_music_asr.server_error_code,
+  };
+#endif
   auto status_json = config_confirmation
       ? ai_keyboard::build_config_confirmation_status_json(snapshot)
       : ai_keyboard::build_config_status_json(snapshot);
@@ -1062,9 +1400,22 @@ void sync_keyboard_audio_config(AppContext* app, const char* reason) {
   const auto port = app->config_state.audio_port();
   // 麦克风来源是 App 的本地会话策略。固件只根据已配置的 Wi-Fi 音频
   // 端点决定硬件能力，避免旧 audio_enabled 状态把控制面永久关闭。
-  config.enabled = app->config_state.audio_enabled();
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  config.online_music_enabled =
+      !app->online_music_credentials.api_key.empty() &&
+      !app->online_music_credentials.workspace_id.empty();
+#else
+  config.online_music_enabled = false;
+#endif
+  config.enabled = app->config_state.audio_enabled() ||
+                   (config.online_music_enabled &&
+                    !app->config_state.wifi_ssid().empty());
   config.wifi_ssid = app->config_state.wifi_ssid();
   config.wifi_password = app->config_state.wifi_password();
+  config.wifi_profiles = app->wifi_profiles;
+  if (config.wifi_profiles[0].ssid.empty() && !config.wifi_ssid.empty()) {
+    config.wifi_profiles[0] = {config.wifi_ssid, config.wifi_password};
+  }
   config.host = app->config_state.audio_host();
   config.port = static_cast<std::uint16_t>(std::clamp(port, 1, 65535));
   config.speaker_sync_key_epoch =
@@ -1075,6 +1426,10 @@ void sync_keyboard_audio_config(AppContext* app, const char* reason) {
           app->config_state.speaker_sync_key(),
           &config.speaker_sync_key);
   app->audio.configure(config);
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  app->online_music_asr.configure(app->online_music_credentials.api_key,
+                                  app->online_music_credentials.workspace_id);
+#endif
   ESP_LOGI(kTag,
            "audio sync reason=%s enabled=%d transport=%s mic=keyboard endpoint_configured=%d capture=%s",
            reason == nullptr ? "" : reason,
@@ -1085,22 +1440,100 @@ void sync_keyboard_audio_config(AppContext* app, const char* reason) {
 }
 
 void service_music(AppContext* app) {
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  const auto progress_now = millis();
+  app->online_music_progress.update(progress_now);
+  if (app->online_music_visual_pending &&
+      app->online_music_progress.completion_hold_elapsed(progress_now)) {
+    app->online_music_visual_pending = false;
+    app->online_music_progress.reset();
+    app->leds.set_online_music_progress(app->online_music_progress,
+                                        progress_now);
+    app->leds.set_music_visual(true, false, progress_now);
+  }
+  if (app->online_music_asr.take_capture_started()) {
+    const auto now = millis();
+    apply_online_music_result(
+        app,
+        app->online_music_mode.handle({
+            ai_keyboard::OnlineMusicEvent::Kind::CaptureStarted,
+            0,
+            now,
+            {}}),
+        now);
+  }
+  bool asr_succeeded = false;
+  std::string asr_text;
+  if (app->online_music_asr.take_result(&asr_succeeded, &asr_text)) {
+    const auto now = millis();
+    const bool failed_while_preparing =
+        !asr_succeeded &&
+        app->online_music_mode.state() ==
+            ai_keyboard::OnlineMusicState::Preparing;
+    if (failed_while_preparing) {
+      app->online_music_progress.fail(
+          ai_keyboard::OnlineMusicStage::Recording, now);
+      app->leds.set_online_music_progress(app->online_music_progress, now);
+    }
+    const auto result = app->online_music_mode.handle({
+        asr_succeeded ? ai_keyboard::OnlineMusicEvent::Kind::RecognitionSucceeded
+                      : ai_keyboard::OnlineMusicEvent::Kind::RecognitionFailed,
+        0,
+        now,
+        asr_text});
+    apply_online_music_result(app, result, now);
+  }
+  app->online_music_stream.poll();
+  if (app->online_music_stream.take_started()) {
+    const auto now = millis();
+    apply_online_music_result(
+        app,
+        app->online_music_mode.handle({
+            ai_keyboard::OnlineMusicEvent::Kind::PlaybackSucceeded,
+            0,
+            now,
+            {}}),
+        now);
+  }
+  const bool online_power_required =
+      app->online_music_stream.power_required();
+  if (app->online_music_power_hold_active != online_power_required) {
+    const esp_err_t power_err =
+        app->peripheral_power.set_speaker_power_hold(online_power_required);
+    if (power_err == ESP_OK) {
+      app->online_music_power_hold_active = online_power_required;
+    }
+  }
+  if (online_power_required && app->peripheral_power.ready()) {
+    app->online_music_stream.notify_power_ready();
+  }
+  std::uint16_t online_rms = 0;
+  std::uint16_t online_beat = 0;
+  if (app->online_music_stream.take_visual(&online_rms, &online_beat)) {
+    app->leds.set_music_audio_level(online_rms, online_beat, millis());
+  }
+  easy_input::online_music::OnlineMusicPlaybackResult playback_result{};
+  if (app->online_music_stream.take_result(&playback_result)) {
+    if (app->online_music_wifi_hold_active) {
+      app->audio.release_online_music_downlink();
+      app->online_music_wifi_hold_active = false;
+    }
+    const auto now = millis();
+    const auto event_kind =
+        playback_result ==
+                easy_input::online_music::OnlineMusicPlaybackResult::Completed
+            ? ai_keyboard::OnlineMusicEvent::Kind::PlaybackCompleted
+            : ai_keyboard::OnlineMusicEvent::Kind::PlaybackFailed;
+    apply_online_music_result(
+        app,
+        app->online_music_mode.handle({event_kind, 0, now, {}}),
+        now);
+  }
+#endif
 #if defined(EASY_INPUT_MUSIC_PLAYER)
   app->music_player.poll();
   const bool power_required = app->music_player.power_required();
-  if (app->music_power_hold_active != power_required) {
-    const esp_err_t power_err =
-        app->peripheral_power.set_speaker_power_hold(power_required);
-    if (power_err != ESP_OK) {
-      ESP_LOGE(kTag,
-               "music speaker power activity update failed: %s",
-               esp_err_to_name(power_err));
-      return;
-    }
-    app->music_power_hold_active = power_required;
-  }
-  if (power_required && app->music_power_hold_active &&
-      app->peripheral_power.ready()) {
+  if (power_required && app->peripheral_power.ready()) {
     app->music_player.notify_power_ready();
   }
   std::uint16_t rms = 0;
@@ -1959,6 +2392,11 @@ ai_keyboard::PowerPolicyInputs power_policy_inputs(AppContext* app,
   inputs.audio_streaming =
       app->audio.streaming() ||
       app->audio_io_arbiter.microphone_generation() != 0;
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  inputs.audio_streaming = inputs.audio_streaming ||
+                           app->online_music_asr.busy() ||
+                           app->online_music_stream.sleep_blocked();
+#endif
 #if defined(EASY_INPUT_SPEAKER_DIAGNOSTIC) || \
     defined(EASY_INPUT_SPEAKER_ASSETS_PRODUCT)
   inputs.speaker_playback_active = app->speaker.sleep_blocked();
@@ -3049,6 +3487,29 @@ bool handle_input_event(const easy_input::InputEvent& event, void* context) {
     app->last_input += ":step=" + std::to_string(event.encoder_step);
   }
   app->last_input_ms = now;
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  const auto online_result = app->online_music_mode.handle({
+      event.input == ai_keyboard::InputId::EncoderPress
+          ? (event.phase == ai_keyboard::InputPhase::Pressed
+                 ? ai_keyboard::OnlineMusicEvent::Kind::EncoderPress
+                 : ai_keyboard::OnlineMusicEvent::Kind::EncoderRelease)
+          : event.input == ai_keyboard::InputId::EncoderLeft
+                ? ai_keyboard::OnlineMusicEvent::Kind::EncoderTurn
+                : event.input == ai_keyboard::InputId::EncoderRight
+                      ? ai_keyboard::OnlineMusicEvent::Kind::EncoderTurn
+                      : event.phase == ai_keyboard::InputPhase::Pressed
+                            ? ai_keyboard::OnlineMusicEvent::Kind::KeyPress
+                            : ai_keyboard::OnlineMusicEvent::Kind::KeyRelease,
+      event.encoder_step,
+      event.timestamp_ms,
+      {}});
+  if (online_result.action != ai_keyboard::OnlineMusicAction::None) {
+    apply_online_music_result(app, online_result, now);
+  }
+  if (online_result.consumed) {
+    return true;
+  }
+#endif
   const auto music_result = app->music_mode.handle({
       event.input, event.phase, event.encoder_step, event.timestamp_ms});
   if (music_result.action != ai_keyboard::MusicModeAction::None) {
@@ -3153,7 +3614,22 @@ bool handle_input_event(const easy_input::InputEvent& event, void* context) {
   return true;
 }
 
+void remember_wifi_profile(AppContext* app,
+                           const std::string& ssid,
+                           const std::string& password) {
+  if (ssid.empty() || password.empty()) {
+    return;
+  }
+  esp_err_t err = ESP_OK;
+  if (!app->config_store.save_wifi_profile({ssid, password}, &err)) {
+    ESP_LOGW(kTag, "Wi-Fi profile save failed: %s", esp_err_to_name(err));
+    return;
+  }
+  app->config_store.load_wifi_profiles(&app->wifi_profiles, &err);
+}
+
 void load_stored_config(AppContext* app) {
+  app->config_store.load_wifi_profiles(&app->wifi_profiles);
   ai_keyboard::HostPlatform stored_platform = ai_keyboard::HostPlatform::MacOS;
   if (!app->config_store.load_host_platform(&stored_platform)) {
     stored_platform = ai_keyboard::HostPlatform::MacOS;
@@ -3175,6 +3651,9 @@ void load_stored_config(AppContext* app) {
   const auto status = app->config_state.apply_json(stored_json);
   if (status == ai_keyboard::ConfigParseStatus::Ok) {
     app->config_state.set_target_platform(stored_platform);
+    remember_wifi_profile(app,
+                          app->config_state.wifi_ssid(),
+                          app->config_state.wifi_password());
     sync_encoder_scroll_axis(app);
     sync_keyboard_audio_config(app, "boot");
   }
@@ -3187,6 +3666,85 @@ void load_stored_config(AppContext* app) {
                                  parse_status_name(status),
                                  stored_json,
                                  status == ai_keyboard::ConfigParseStatus::Ok);
+}
+
+void import_config_provision(AppContext* app) {
+  std::string json;
+  const auto read_err = easy_input::read_config_provision(&json);
+  if (read_err == ESP_ERR_NOT_FOUND) {
+    return;
+  }
+  if (read_err != ESP_OK) {
+    ESP_LOGE(kTag, "CONFIG provision rejected: %s", esp_err_to_name(read_err));
+    return;
+  }
+
+  auto candidate = app->config_state;
+  const auto parse_status = candidate.apply_json(json);
+  if (parse_status != ai_keyboard::ConfigParseStatus::Ok) {
+    ESP_LOGE(kTag,
+             "CONFIG provision parse rejected status=%s bytes=%u",
+             parse_status_name(parse_status),
+             static_cast<unsigned>(json.size()));
+    return;
+  }
+
+  esp_err_t save_err = ESP_OK;
+  if (!app->config_store.save_config_and_host_platform(
+          json, candidate.target_platform(), &save_err)) {
+    ESP_LOGE(kTag, "CONFIG provision save failed: %s", esp_err_to_name(save_err));
+    return;
+  }
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  const auto& api_key = candidate.online_music_asr_api_key();
+  const auto& workspace_id = candidate.online_music_asr_workspace_id();
+  if (!api_key.empty() && !workspace_id.empty()) {
+    easy_input::NvsConfigStore::OnlineMusicCredentials credentials{
+        api_key, workspace_id};
+    if (!app->config_store.save_online_music_credentials(credentials,
+                                                          &save_err)) {
+      ESP_LOGE(kTag, "CONFIG provision credential save failed: %s",
+               esp_err_to_name(save_err));
+      return;
+    }
+  }
+#endif
+  const auto consume_err = easy_input::consume_config_provision();
+  if (consume_err != ESP_OK) {
+    ESP_LOGE(kTag,
+             "CONFIG provision consume failed: %s",
+             esp_err_to_name(consume_err));
+    return;
+  }
+  ESP_LOGI(kTag,
+           "CONFIG provision imported and consumed bytes=%u",
+           static_cast<unsigned>(json.size()));
+}
+
+void load_online_music_credentials(AppContext* app) {
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  esp_err_t err = ESP_OK;
+  if (app->config_store.load_online_music_credentials(
+          &app->online_music_credentials, &err)) {
+    ESP_LOGI(kTag, "online music credentials configured=1");
+    return;
+  }
+  const auto& api_key = app->config_state.online_music_asr_api_key();
+  const auto& workspace_id = app->config_state.online_music_asr_workspace_id();
+  if (!api_key.empty() && !workspace_id.empty()) {
+    app->online_music_credentials = {api_key, workspace_id};
+    if (app->config_store.save_online_music_credentials(
+            app->online_music_credentials, &err)) {
+      ESP_LOGI(kTag, "online music credentials migrated configured=1");
+      return;
+    }
+  }
+  app->online_music_credentials = {};
+  ESP_LOGW(kTag, "online music credentials configured=0 status=%s",
+           esp_err_to_name(err));
+#else
+  static_cast<void>(app);
+#endif
 }
 
 // B 协议(罗技 HID++ 式):配置/音频控制经 HID 送达后,从 0x11 输入报文
@@ -3289,6 +3847,9 @@ void apply_pending_config(AppContext* app) {
   const bool platform_changed =
       candidate_state.target_platform() != app->config_state.target_platform();
   if (saved) {
+    remember_wifi_profile(app,
+                          candidate_state.wifi_ssid(),
+                          candidate_state.wifi_password());
     if (platform_changed) {
       release_keyboard_reports(app);
     }
@@ -3645,6 +4206,14 @@ ai_keyboard::AwakeWaitDecision plan_next_awake_work(AppContext* app,
   planner.add_deadline(platform_deadline,
                        deadline_ms,
                        "platform_selection");
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  deadline_ms = 0;
+  const bool online_music_deadline =
+      app->online_music_mode.next_deadline_ms(&deadline_ms);
+  planner.add_deadline(online_music_deadline,
+                       deadline_ms,
+                       "online_music_mode");
+#endif
 
   if (!app->pending_wheel_reports.empty() && app->last_wheel_flush_ms != 0) {
     planner.add_deadline(true,
@@ -3818,6 +4387,7 @@ extern "C" void app_main(void) {
   ESP_ERROR_CHECK(app.peripheral_power.begin_awake());
   app.last_user_activity_ms = millis();
   ESP_ERROR_CHECK(easy_input::initialize_nvs_storage());
+  import_config_provision(&app);
   esp_err_t brightness_load_err = ESP_OK;
   if (!app.config_store.load_led_brightness(
           &app.led_brightness_percent, &brightness_load_err)) {
@@ -3843,6 +4413,22 @@ extern "C" void app_main(void) {
   } else {
     app.audio.set_work_ready_callback(signal_async_work, &app);
   }
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+  const esp_err_t online_music_err =
+      app.online_music_stream.begin(app.platform_task, &app.audio_io_arbiter);
+  app.online_music_stream_ready = online_music_err == ESP_OK;
+  if (online_music_err != ESP_OK) {
+    ESP_LOGW(kTag, "online music stream unavailable: %s",
+             esp_err_to_name(online_music_err));
+  }
+  const esp_err_t online_music_asr_err =
+      app.online_music_asr.begin(app.platform_task, &app.audio);
+  app.online_music_asr_ready = online_music_asr_err == ESP_OK;
+  if (online_music_asr_err != ESP_OK) {
+    ESP_LOGW(kTag, "online music ASR unavailable: %s",
+             esp_err_to_name(online_music_asr_err));
+  }
+#endif
 #if defined(EASY_INPUT_MUSIC_PLAYER)
   const esp_err_t music_err =
       app.music_player.begin(app.platform_task, &app.audio_io_arbiter);
@@ -3889,6 +4475,12 @@ extern "C" void app_main(void) {
   }
   sync_power_sample(&app, millis(), true);
   load_stored_config(&app);
+  load_online_music_credentials(&app);
+  sync_keyboard_audio_config(&app, "online_credentials");
+  // Reuse the SSID/password already persisted by the desktop configurator.
+  // This starts a one-shot, bounded boot reconnect window; it does not alter
+  // the existing scan parameters or the later explicit provisioning path.
+  app.audio.start_boot_wifi_autoconnect();
 #if defined(EASY_INPUT_SPEAKER_ASSETS_PRODUCT)
   // Keep the microphone's frozen resource pool first. The platform loop then
   // starts local Store/USB and the required Wi-Fi sound service before the
@@ -3967,6 +4559,14 @@ extern "C" void app_main(void) {
     // short click to arrive. Poll with a fresh timestamp so queued ISR
     // snapshots and the settling sample always stay in chronological order.
     app.inputs.poll(millis(), handle_input_event, &app);
+#if defined(EASY_INPUT_ONLINE_MUSIC)
+    const auto online_tick_now = millis();
+    const auto online_tick = app.online_music_mode.handle({
+        ai_keyboard::OnlineMusicEvent::Kind::Tick, 0, online_tick_now, {}});
+    if (online_tick.action != ai_keyboard::OnlineMusicAction::None) {
+      apply_online_music_result(&app, online_tick, online_tick_now);
+    }
+#endif
     service_music(&app);
     flush_pending_wheel_report(&app, millis());
 #if defined(EASY_INPUT_SPEAKER_DIAGNOSTIC) || \

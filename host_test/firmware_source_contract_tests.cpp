@@ -1641,6 +1641,8 @@ void offline_music_uses_a_private_flash_image_without_a_companion_path() {
   assert(!source_path_exists("main/platform/music_receiver.cpp"));
   assert(!source_path_exists("main/platform/music_receiver.h"));
   assert(!source_path_exists("tools/music_companion.py"));
+  assert(!source_path_exists(
+      "tools/__pycache__/music_companion.cpython-314.pyc"));
 
   assert(root_cmake.find("EASY_INPUT_MUSIC_PLAYER") != std::string::npos);
   assert(root_cmake.find(
@@ -3655,6 +3657,143 @@ void led_brightness_wins_double_click_arbitration_and_uses_preview_contract() {
          std::string::npos);
 }
 
+void one_shot_config_provision_is_bounded_validated_and_consumed() {
+  const auto partitions = read_source("partitions.csv");
+  const auto provision = read_source("main/platform/config_provision.cpp");
+  const auto app = read_source("main/app_main.cpp");
+  const auto nvs = read_source("main/platform/nvs_store.cpp");
+
+  assert(partitions.find("provision") == std::string::npos);
+  assert(provision.find("kProvisionBytes = 0x1000U") != std::string::npos);
+  assert(provision.find("kProvisionAddress = 0xFFF000U") !=
+         std::string::npos);
+  assert(provision.find("esp_flash_get_size") != std::string::npos);
+  assert(provision.find("length > ai_keyboard::kConfigMaxJsonLen") !=
+         std::string::npos);
+  assert(provision.find("ai_keyboard::crc16_ccitt") != std::string::npos);
+  assert(provision.find("esp_flash_erase_region") != std::string::npos);
+  const auto nvs_init = app.find("initialize_nvs_storage()");
+  const auto import = app.find("import_config_provision(&app)");
+  const auto brightness = app.find("load_led_brightness", import);
+  const auto normal_load = app.find("load_stored_config(&app)", import);
+  const auto credential_load =
+      app.find("load_online_music_credentials(&app)", normal_load);
+  assert(nvs_init != std::string::npos);
+  assert(import != std::string::npos);
+  assert(brightness != std::string::npos);
+  assert(normal_load != std::string::npos);
+  assert(credential_load != std::string::npos);
+  assert(nvs_init < import && import < brightness && import < normal_load &&
+         normal_load < credential_load);
+  assert(nvs.find("om_asr_key_v1") != std::string::npos);
+  assert(nvs.find("om_asr_ws_v1") != std::string::npos);
+  const auto provision_import = section(app,
+                                        "void import_config_provision(",
+                                        "void load_online_music_credentials(AppContext*");
+  assert(provision_import.find("save_online_music_credentials(") !=
+         std::string::npos);
+  const auto app_push = section(app,
+                                "void apply_pending_config(",
+                                "void apply_pending_agent_status(");
+  assert(app_push.find("save_online_music_credentials") == std::string::npos);
+}
+
+void online_music_deadlines_are_part_of_the_awake_schedule() {
+  const auto app = read_source("main/app_main.cpp");
+  const auto led = read_source("main/platform/led_strip_status.cpp");
+  const auto schedule = section(app,
+                                "plan_next_awake_work(AppContext* app,",
+                                "}  // namespace\n\nextern \"C\" void app_main");
+  assert(schedule.find("online_music_mode.next_deadline_ms(&deadline_ms)") !=
+         std::string::npos);
+  assert(schedule.find("\"online_music_mode\"") != std::string::npos);
+  assert(led.find("kStageToPixel{{4U, 3U, 2U, 1U, 0U}}") !=
+         std::string::npos);
+}
+
+void online_music_stream_drains_i2s_writes_and_wakes_visual_owner() {
+  const auto stream =
+      read_source("features/online_music/src/online_music_stream.cpp");
+  const auto write = section(stream,
+                             "esp_err_t OnlineMusicStream::write_samples(",
+                             "void OnlineMusicStream::publish_visual(");
+  assert(write.find("while (offset < bytes)") != std::string::npos);
+  assert(write.find("data + offset, bytes - offset") != std::string::npos);
+  assert(write.find("if (written == 0U)") != std::string::npos);
+  assert(write.find("offset += written") != std::string::npos);
+
+  const auto visual = section(stream,
+                              "void OnlineMusicStream::publish_visual(",
+                              "void OnlineMusicStream::finish_generation(");
+  const auto publish = visual.find("visual_pending_.store(true");
+  const auto notify = visual.find("xTaskNotifyGive(owner_task_)", publish);
+  assert(publish != std::string::npos);
+  assert(notify != std::string::npos);
+  assert(publish < notify);
+}
+
+void online_music_frames_and_wifi_downlink_are_held_for_playback() {
+  const auto asr = read_source("main/platform/online_music_asr.cpp");
+  const auto audio = read_source("main/platform/keyboard_audio.cpp");
+  const auto audio_header = read_source("main/platform/keyboard_audio.h");
+  const auto app = read_source("main/app_main.cpp");
+
+  assert(asr.find("WS_TRANSPORT_OPCODES_FIN") != std::string::npos);
+  assert(audio_header.find("bool acquire_online_music_downlink()") !=
+         std::string::npos);
+  assert(audio_header.find("online_music_downlink_active_") !=
+         std::string::npos);
+  const auto acquire = section(audio,
+                               "bool KeyboardAudioLink::acquire_online_music_downlink()",
+                               "void KeyboardAudioLink::release_online_music_downlink()");
+  assert(acquire.find("esp_wifi_set_ps(WIFI_PS_NONE)") != std::string::npos);
+  const auto playback = section(app,
+                                "case ai_keyboard::OnlineMusicAction::StartPlayback:",
+                                "case ai_keyboard::OnlineMusicAction::TogglePause:");
+  assert(playback.find("acquire_online_music_downlink()") != std::string::npos);
+  assert(playback.find("release_online_music_downlink()") != std::string::npos);
+  assert(app.find("if (app->online_music_wifi_hold_active)") !=
+         std::string::npos);
+}
+
+void wifi_roaming_survives_boot_timeout_and_fresh_disconnects() {
+  const auto source = read_source("main/platform/keyboard_audio.cpp");
+  const auto control = section(source,
+                               "void KeyboardAudioLink::run_control_channel()",
+                               "void KeyboardAudioLink::request_wifi_release_for_deep_sleep()");
+  const auto timeout_comment = control.find(
+      "Boot timeout only ends the one-minute high-frequency startup window.");
+  const auto scan_branch = control.find("if ((!service_busy || reconnect_requested) && roam_scan_due)");
+  const auto reconnect_reset = control.find(
+      "const bool new_reconnect_request =", timeout_comment);
+  const auto reset_scan_tick = control.find("last_wifi_scan_tick = 0;", reconnect_reset);
+  const auto reset_backoff = control.find("wifi_scan_retry_ms = kWifiRoamScanInitialRetryMs;",
+                                          reset_scan_tick);
+  assert(timeout_comment != std::string::npos);
+  assert(reconnect_reset != std::string::npos);
+  assert(reset_scan_tick != std::string::npos);
+  assert(reset_backoff != std::string::npos);
+  assert(scan_branch != std::string::npos);
+  assert(reconnect_reset < reset_scan_tick);
+  assert(reset_scan_tick < reset_backoff);
+  assert(reset_backoff < scan_branch);
+  assert(control.find("boot_wifi_timeout_waiting_explicit") == std::string::npos);
+}
+
+void online_music_connects_through_saved_wifi_profiles() {
+  const auto source = read_source("main/platform/keyboard_audio.cpp");
+  const auto ensure = section(source,
+                              "bool KeyboardAudioLink::ensure_internet_ready()",
+                              "bool KeyboardAudioLink::start_microphone_capture(");
+  assert(ensure.find("has_protected_wifi_profile(config.wifi_profiles)") !=
+         std::string::npos);
+  assert(ensure.find("connect_best_saved_wifi(config, \"online_music\")") !=
+         std::string::npos);
+  assert(ensure.find("xEventGroupWaitBits(") != std::string::npos);
+  assert(ensure.find("kWifiConnectTimeoutMs") != std::string::npos);
+  assert(ensure.find("config.wifi_ssid.empty()") == std::string::npos);
+}
+
 }  // namespace
 
 int main() {
@@ -3693,5 +3832,11 @@ int main() {
   host_action_transport_reuses_shared_v1_encoding_and_single_channel_edges();
   host_action_capability_is_in_all_status_publish_paths();
   led_brightness_wins_double_click_arbitration_and_uses_preview_contract();
+  one_shot_config_provision_is_bounded_validated_and_consumed();
+  online_music_deadlines_are_part_of_the_awake_schedule();
+  online_music_stream_drains_i2s_writes_and_wakes_visual_owner();
+  online_music_frames_and_wifi_downlink_are_held_for_playback();
+  wifi_roaming_survives_boot_timeout_and_fresh_disconnects();
+  online_music_connects_through_saved_wifi_profiles();
   return 0;
 }

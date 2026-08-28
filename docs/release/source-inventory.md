@@ -13,6 +13,7 @@
 | `features/speaker_assets/` | 声音格式、读取、A/B 存储、会话、同步和运行时 | 根目录项目许可证 |
 | `diagnostics/` | 可选扬声器、IMA-ADPCM 与 Ogg/Opus 诊断 | 项目源码与独立依赖分别按其许可证 |
 | `host_test/` | 主机行为、协议、资源与源码合同测试 | 根目录项目许可证 |
+| `features/online_music/`、`main/platform/online_music_asr.cpp` | 阿里云百炼 ASR、GD Studio 搜索/链接解析、ESP32 HTTPS MP3 流式播放 | 项目源码；GD Studio API 按上游页面标注 CC BY-NC 4.0，须保留署名与非商业限制 |
 
 ## 项目自有资源
 
@@ -32,6 +33,7 @@
 | `espressif/esp_tinyusb` | 1.7.6~2 | USB HID 托管组件 |
 | `espressif/tinyusb` | 0.21.0~1 | USB 传递依赖 |
 | `espressif/esp_audio_codec` | 2.5.0 | 仅在 Ogg/Opus 诊断构建启用 |
+| GD Studio Online Music Platform API | 运行时服务 | 在线音乐搜索和播放链接解析；API 端点、署名和限制见 `docs/online-music.md` |
 
 具体通知和适用许可证见 `THIRD_PARTY_NOTICES.md`。默认构建的依赖锁为 `dependencies.lock`；Opus 诊断使用独立构建目录中的锁文件，避免改变默认依赖图。
 
@@ -43,7 +45,7 @@
 
 ## 当前验证证据
 
-- 主机测试：55/55 通过；
+- 主机测试：以当前 CTest 输出为准；在线音乐专项覆盖 ASR 协议、查询提取、模式状态、进度灯状态和配置边界；
 - 默认 ESP-IDF 5.5.5 / ESP32-S3 构建：通过；具体镜像大小、分区余量和固件 SHA-256 以对应 GitHub Release 的正式构建记录为准；链接映射包含 WaytoAGI EIAD 资源起止符号；
 - IMA-ADPCM 与 Ogg/Opus 诊断构建：待在默认固件验证后分别重验；
 - 板级静态检查：0 FAIL；由于 v2 引脚声明位于条件编译分支，检查器报告 2 个 WARN，不能据此宣称全部引脚已被该静态工具验证；
